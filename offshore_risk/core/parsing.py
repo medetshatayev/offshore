@@ -135,7 +135,7 @@ def validate_dataframe(
         "columns_expected": len(expected_columns),
         "missing_columns": list(set(expected_columns.keys()) - set(df.columns)),
         "extra_columns": list(set(df.columns) - set(expected_columns.keys())),
-        "empty_amount_kzt": df["Сумма в тенге"].isna().sum() if "Сумма в тенге" in df.columns else 0
+        "empty_amount_kzt": int(df["Сумма в тенге"].isna().sum()) if "Сумма в тенге" in df.columns else 0
     }
     
     logger.info(f"Validation stats for {direction}: {stats}")

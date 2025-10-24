@@ -14,8 +14,8 @@ logger = setup_logger(__name__)
 
 # OpenAI configuration from environment
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
-OPENAI_TIMEOUT = int(os.getenv("OPENAI_TIMEOUT", "120"))
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5")
+OPENAI_TIMEOUT = int(os.getenv("OPENAI_TIMEOUT", "60"))
 
 
 class OpenAIClientWrapper:
@@ -26,7 +26,10 @@ class OpenAIClientWrapper:
         if not OPENAI_API_KEY:
             raise ValueError("OPENAI_API_KEY environment variable not set")
         
-        self.client = OpenAI(api_key=OPENAI_API_KEY, timeout=OPENAI_TIMEOUT)
+        self.client = OpenAI(
+            api_key=OPENAI_API_KEY,
+            timeout=OPENAI_TIMEOUT
+        )
         logger.info(f"Initialized OpenAI client with model: {OPENAI_MODEL}")
     
     @retry(

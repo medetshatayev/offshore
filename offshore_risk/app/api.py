@@ -96,7 +96,7 @@ async def process_transaction_batch(
     return processed_results
 
 
-def process_file(file_path: str, direction: str) -> dict:
+async def process_file(file_path: str, direction: str) -> dict:
     """
     Process a single Excel file through the full pipeline.
     
@@ -164,14 +164,7 @@ def process_file(file_path: str, direction: str) -> dict:
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_LLM)
     
     # Run async processing
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        responses = loop.run_until_complete(
-            process_transaction_batch(transactions_with_signals, semaphore)
-        )
-    finally:
-        loop.close()
+    responses = await process_transaction_batch(transactions_with_signals, semaphore)
     
     logger.info(f"Completed LLM classification for {len(responses)} transactions")
     
@@ -240,8 +233,8 @@ async def process_files(
         logger.info("Files saved, starting processing...")
         
         # Process both files
-        incoming_result = process_file(str(incoming_path), "incoming")
-        outgoing_result = process_file(str(outgoing_path), "outgoing")
+        incoming_result = await process_file(str(incoming_path), "incoming")
+        outgoing_result = await process_file(str(outgoing_path), "outgoing")
         
         # Build response
         response = {
