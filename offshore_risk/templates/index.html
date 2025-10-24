@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Offshore Transaction Risk Detection</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 800px;
+            width: 100%;
+            padding: 40px;
+        }
+        
+        h1 {
+            color: #2d3748;
+            font-size: 28px;
+            margin-bottom: 12px;
+            text-align: center;
+        }
+        
+        .subtitle {
+            color: #718096;
+            text-align: center;
+            margin-bottom: 32px;
+            font-size: 14px;
+        }
+        
+        .upload-section {
+            margin-bottom: 24px;
+        }
+        
+        .upload-label {
+            display: block;
+            color: #2d3748;
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        
+        .file-input-wrapper {
+            position: relative;
+            display: block;
+        }
+        
+        input[type="file"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px dashed #cbd5e0;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: #f7fafc;
+            font-size: 14px;
+        }
+        
+        input[type="file"]:hover {
+            border-color: #667eea;
+            background: #edf2f7;
+        }
+        
+        .btn {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-top: 24px;
+        }
+        
+        .btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .progress {
+            display: none;
+            margin-top: 24px;
+            padding: 16px;
+            background: #edf2f7;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .progress.active {
+            display: block;
+        }
+        
+        .spinner {
+            border: 3px solid #e2e8f0;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 12px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .results {
+            display: none;
+            margin-top: 32px;
+            padding: 24px;
+            background: #f7fafc;
+            border-radius: 8px;
+        }
+        
+        .results.active {
+            display: block;
+        }
+        
+        .results h2 {
+            color: #2d3748;
+            font-size: 20px;
+            margin-bottom: 16px;
+        }
+        
+        .result-file {
+            background: white;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .result-file h3 {
+            color: #2d3748;
+            font-size: 16px;
+            margin-bottom: 8px;
+        }
+        
+        .download-btn {
+            display: inline-block;
+            padding: 8px 16px;
+            background: #48bb78;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            transition: background 0.2s;
+            margin-top: 8px;
+        }
+        
+        .download-btn:hover {
+            background: #38a169;
+        }
+        
+        .stats {
+            margin-top: 12px;
+            font-size: 13px;
+            color: #4a5568;
+        }
+        
+        .stats-item {
+            margin: 4px 0;
+        }
+        
+        .error {
+            display: none;
+            margin-top: 24px;
+            padding: 16px;
+            background: #fed7d7;
+            border-left: 4px solid #f56565;
+            border-radius: 8px;
+            color: #742a2a;
+        }
+        
+        .error.active {
+            display: block;
+        }
+        
+        .info-box {
+            background: #bee3f8;
+            border-left: 4px solid #3182ce;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 24px;
+            font-size: 13px;
+            color: #2c5282;
+        }
+        
+        .info-box strong {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏦 Offshore Transaction Risk Detection</h1>
+        <p class="subtitle">Detect offshore jurisdiction involvement in banking transactions</p>
+        
+        <div class="info-box">
+            <strong>ℹ️ Instructions:</strong>
+            Upload two Excel files: one for incoming transactions and one for outgoing transactions. 
+            The system will analyze transactions ≥ 5,000,000 KZT and detect potential offshore involvement.
+        </div>
+        
+        <form id="uploadForm">
+            <div class="upload-section">
+                <label class="upload-label" for="incomingFile">
+                    📥 Incoming Transactions File (Входящие операции)
+                </label>
+                <input type="file" id="incomingFile" name="incoming_file" accept=".xlsx,.xls" required>
+            </div>
+            
+            <div class="upload-section">
+                <label class="upload-label" for="outgoingFile">
+                    📤 Outgoing Transactions File (Исходящие операции)
+                </label>
+                <input type="file" id="outgoingFile" name="outgoing_file" accept=".xlsx,.xls" required>
+            </div>
+            
+            <button type="submit" class="btn" id="submitBtn">
+                Process Transactions
+            </button>
+        </form>
+        
+        <div class="progress" id="progress">
+            <div class="spinner"></div>
+            <p><strong>Processing transactions...</strong></p>
+            <p style="font-size: 13px; color: #718096; margin-top: 8px;">
+                This may take several minutes depending on the number of transactions.
+            </p>
+        </div>
+        
+        <div class="error" id="error"></div>
+        
+        <div class="results" id="results">
+            <h2>✅ Processing Complete</h2>
+            
+            <div class="result-file" id="incomingResult" style="display: none;">
+                <h3>📥 Incoming Transactions</h3>
+                <a href="#" class="download-btn" id="incomingDownload">Download Processed File</a>
+                <div class="stats" id="incomingStats"></div>
+            </div>
+            
+            <div class="result-file" id="outgoingResult" style="display: none;">
+                <h3>📤 Outgoing Transactions</h3>
+                <a href="#" class="download-btn" id="outgoingDownload">Download Processed File</a>
+                <div class="stats" id="outgoingStats"></div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const formData = new FormData();
+            formData.append('incoming_file', document.getElementById('incomingFile').files[0]);
+            formData.append('outgoing_file', document.getElementById('outgoingFile').files[0]);
+            
+            // Show progress, hide results and errors
+            document.getElementById('progress').classList.add('active');
+            document.getElementById('results').classList.remove('active');
+            document.getElementById('error').classList.remove('active');
+            document.getElementById('submitBtn').disabled = true;
+            
+            try {
+                const response = await fetch('/process', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Processing failed');
+                }
+                
+                const data = await response.json();
+                
+                // Hide progress
+                document.getElementById('progress').classList.remove('active');
+                
+                // Show results
+                displayResults(data);
+                
+            } catch (error) {
+                document.getElementById('progress').classList.remove('active');
+                document.getElementById('error').textContent = `Error: ${error.message}`;
+                document.getElementById('error').classList.add('active');
+            } finally {
+                document.getElementById('submitBtn').disabled = false;
+            }
+        });
+        
+        function displayResults(data) {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.classList.add('active');
+            
+            // Incoming results
+            if (data.incoming.filename) {
+                const incomingDiv = document.getElementById('incomingResult');
+                incomingDiv.style.display = 'block';
+                
+                const downloadLink = document.getElementById('incomingDownload');
+                downloadLink.href = `/download/${data.incoming.filename}`;
+                
+                const statsDiv = document.getElementById('incomingStats');
+                statsDiv.innerHTML = formatStats(data.incoming.stats);
+            }
+            
+            // Outgoing results
+            if (data.outgoing.filename) {
+                const outgoingDiv = document.getElementById('outgoingResult');
+                outgoingDiv.style.display = 'block';
+                
+                const downloadLink = document.getElementById('outgoingDownload');
+                downloadLink.href = `/download/${data.outgoing.filename}`;
+                
+                const statsDiv = document.getElementById('outgoingStats');
+                statsDiv.innerHTML = formatStats(data.outgoing.stats);
+            }
+        }
+        
+        function formatStats(stats) {
+            let html = `<div class="stats-item"><strong>Total rows:</strong> ${stats.total_rows || 'N/A'}</div>`;
+            html += `<div class="stats-item"><strong>Filtered (≥5M KZT):</strong> ${stats.filtered_count || 0}</div>`;
+            html += `<div class="stats-item"><strong>Processed:</strong> ${stats.processed_count || 0}</div>`;
+            
+            if (stats.classifications) {
+                html += '<div class="stats-item"><strong>Classifications:</strong></div>';
+                for (const [label, count] of Object.entries(stats.classifications)) {
+                    html += `<div class="stats-item" style="margin-left: 20px;">• ${label}: ${count}</div>`;
+                }
+            }
+            
+            return html;
+        }
+    </script>
+</body>
+</html>
