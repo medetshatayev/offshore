@@ -12,7 +12,7 @@ logger = setup_logger(__name__)
 # Column mapping for incoming transactions
 INCOMING_COLUMNS = {
     "№п/п": "id",
-    "Наименование бенефициара": "beneficiary_name",
+    "Наименование бенефициара (наш клиент)": "beneficiary_name",
     "Категория клиента": "client_category",
     "Страна резидентства": "country_residence",
     "Гражданство": "citizenship",
@@ -29,17 +29,17 @@ INCOMING_COLUMNS = {
     "Адрес банка плательщика": "payer_bank_address",
     "Состояние": "status",
     "Код страны": "country_code",
-    "Страна получателя": "recipient_country"
+    "Страна отправителя": "payer_country"
 }
 
 # Column mapping for outgoing transactions
 OUTGOING_COLUMNS = {
     "№п/п": "id",
-    "Наименование плательщика": "payer_name",
+    "Наименование плательщика (наш клиент)": "beneficiary_name",
     "Категория клиента": "client_category",
     "Страна резидентства": "country_residence",
     "Гражданство": "citizenship",
-    "Номер счета плательщика": "payer_account",
+    "Номер счета плательщика": "beneficiary_account",
     "Дата валютирования": "value_date",
     "Дата приема": "acceptance_date",
     "Сумма": "amount",

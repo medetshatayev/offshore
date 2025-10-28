@@ -53,7 +53,7 @@ offshore_risk/
 ### Prerequisites
 
 - Python 3.12+
-- OpenAI API key with access to GPT-4 or later
+- OpenAI API key with access to GPT
 - pip or conda for package management
 
 ### Installation
@@ -66,7 +66,7 @@ offshore_risk/
 2. **Create virtual environment** (recommended):
    ```bash
    python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   source venv/bin/activate
    ```
 
 3. **Install dependencies**:
@@ -89,8 +89,8 @@ Edit `.env` file with your settings:
 OPENAI_API_KEY=your_openai_api_key_here
 
 # Optional (defaults shown)
-OPENAI_MODEL=gpt-4o
-OPENAI_TIMEOUT=120
+OPENAI_MODEL=gpt-5
+OPENAI_TIMEOUT=60
 TEMP_STORAGE_PATH=/tmp/offshore_risk
 LOG_LEVEL=INFO
 MAX_CONCURRENT_LLM_CALLS=5
@@ -186,7 +186,7 @@ Open your browser and navigate to `http://localhost:8000`
 
 **Example**:
 ```
-Итог: ОФШОР: ДА | Уверенность: 95% | Объяснение: SWIFT код банка указывает на Каймановы острова, что является офшорной юрисдикцией. | Совпадения: SWIFT: KY; Страна: Cayman Islands (KY) (1.00) | Источники: Нет источников
+Итог: ОФШОР: ДА | Уверенность: 90% | Объяснение: SWIFT код банка указывает на Каймановы острова, что является офшорной юрисдикцией. | Совпадения: SWIFT: KY; Страна: Cayman Islands (KY) (1.00) | Источники: Нет источников
 ```
 
 ### Output Files

@@ -14,7 +14,6 @@ logger = setup_logger(__name__)
 
 def classify_transaction(
     transaction_data: Dict[str, Any],
-    enable_web_search: bool = True,
     temperature: float = 0.1
 ) -> OffshoreRiskResponse:
     """
@@ -22,7 +21,6 @@ def classify_transaction(
     
     Args:
         transaction_data: Normalized transaction dictionary with signals
-        enable_web_search: Whether to enable web_search tool
         temperature: LLM temperature (0.0-1.0)
     
     Returns:
@@ -34,8 +32,7 @@ def classify_transaction(
     try:
         # Build prompts
         system_prompt = build_system_prompt()
-        if enable_web_search:
-            system_prompt += "\n\n" + build_websearch_system_prompt()
+        system_prompt += "\n\n" + build_websearch_system_prompt()
         
         user_message = build_user_message(transaction_data)
         
@@ -51,7 +48,6 @@ def classify_transaction(
             user_message=user_message,
             response_schema=response_schema,
             temperature=temperature,
-            enable_web_search=enable_web_search
         )
         
         # Validate response with pydantic

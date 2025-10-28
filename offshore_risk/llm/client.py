@@ -44,7 +44,6 @@ class OpenAIClientWrapper:
         user_message: str,
         response_schema: Dict[str, Any],
         temperature: float = 0.1,
-        enable_web_search: bool = True
     ) -> Dict[str, Any]:
         """
         Call OpenAI API with structured output and optional web_search.
@@ -54,7 +53,6 @@ class OpenAIClientWrapper:
             user_message: User message with transaction data
             response_schema: JSON schema for structured output
             temperature: Model temperature (0.0-1.0)
-            enable_web_search: Whether to enable web_search tool
         
         Returns:
             Parsed JSON response
@@ -62,46 +60,38 @@ class OpenAIClientWrapper:
         Raises:
             Exception: If API call fails after retries
         """
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message}
-        ]
+        system_prompt_with_schema = (
+            f"{system_prompt}\n\n"
+            "Please provide your response in a JSON format that strictly adheres to the following schema:\n"
+            f"{json.dumps(response_schema, indent=2)}"
+        )
+        input_text = f"System: {system_prompt_with_schema}\nUser: {user_message}"
         
         # Build request parameters
         request_params = {
             "model": OPENAI_MODEL,
-            "messages": messages,
-            "temperature": temperature,
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "offshore_risk_assessment",
-                    "strict": True,
-                    "schema": response_schema
-                }
-            }
+            "input": input_text,
+            "tools": [{"type": "web_search"}],
+            "tool_choice": "auto",
         }
-        
-        # Add web_search tool if enabled
-        if enable_web_search:
-            request_params["tools"] = [{"type": "web_search"}]
-            request_params["tool_choice"] = "auto"
         
         logger.debug(f"Calling OpenAI API with model={OPENAI_MODEL}, temperature={temperature}")
         
         try:
             # Make API call
-            response = self.client.chat.completions.create(**request_params)
+            response = self.client.responses.create(**request_params)
             
             # Extract response content
-            message = response.choices[0].message
+            content = None
+            for item in response.output:
+                if item.type == 'message':
+                    for content_item in item.content:
+                        if content_item.type == 'output_text':
+                            content = content_item.text
+                            break
+                if content:
+                    break
             
-            # Check if tools were used
-            if hasattr(message, "tool_calls") and message.tool_calls:
-                logger.debug(f"LLM used {len(message.tool_calls)} tool calls")
-            
-            # Parse JSON response
-            content = message.content
             if not content:
                 raise ValueError("Empty response from LLM")
             

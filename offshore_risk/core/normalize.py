@@ -134,7 +134,6 @@ def normalize_transaction(
         "citizenship": row.get("Гражданство"),
         "city": row.get("Город"),
         "country_code": row.get("Код страны"),
-        "recipient_country": row.get("Страна получателя"),
         "status": row.get("Состояние"),
         "processed_at": row.get("processed_at")
     }
@@ -142,25 +141,27 @@ def normalize_transaction(
     # Direction-specific fields
     if direction == "incoming":
         normalized.update({
-            "beneficiary_name": row.get("Наименование бенефициара"),
+            "beneficiary_name": row.get("Наименование бенефициара (наш клиент)"),
             "beneficiary_account": row.get("Номер счета бенефициара"),
             "payer": row.get("Плательщик"),
             "payer_bank": row.get("Банк плательщика"),
             "payer_bank_swift": row.get("SWIFT Банка плательщика"),
             "payer_bank_address": row.get("Адрес банка плательщика"),
-            "client_category": row.get("Категория клиента")
+            "client_category": row.get("Категория клиента"),
+            "payer_country": row.get("Страна отправителя")
         })
         normalized["swift_code"] = row.get("SWIFT Банка плательщика")
     else:  # outgoing
         normalized.update({
-            "payer_name": row.get("Наименование плательщика"),
+            "payer_name": row.get("Наименование плательщика (наш клиент)"),
             "payer_account": row.get("Номер счета плательщика"),
             "recipient": row.get("Получатель"),
             "recipient_bank": row.get("Банк получателя"),
             "recipient_bank_swift": row.get("SWIFT Банка получателя"),
             "recipient_bank_address": row.get("Адрес банка получателя"),
             "payment_details": row.get("Детали платежа"),
-            "client_category": row.get("Категория клиента")
+            "client_category": row.get("Категория клиента"),
+            "recipient_country": row.get("Страна получателя")
         })
         normalized["swift_code"] = row.get("SWIFT Банка получателя")
     
