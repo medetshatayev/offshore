@@ -82,7 +82,7 @@ Any transaction involving these countries should be flagged as offshore:
    If you use web_search, you MUST cite the sources in the `sources` array. Only include canonical, authoritative URLs (no screenshots).
 
 6. **Output Format**: You MUST return valid JSON that conforms to the schema provided. The response must include:
-   - transaction_id, direction, amount_kzt
+   - transaction_id, direction
    - signals (swift country, matches)
    - classification (label and confidence 0.0-1.0)
    - reasoning_short_ru (1-2 sentences in Russian explaining the decision)
@@ -130,12 +130,12 @@ def build_user_message(transaction_data: Dict[str, Any]) -> str:
     # Extract key fields
     txn_id = transaction_data.get("id", "N/A")
     direction = transaction_data.get("direction", "unknown")
-    amount_kzt = transaction_data.get("amount_kzt", 0)
     currency = transaction_data.get("currency", "N/A")
     swift = transaction_data.get("swift_code", "N/A")
     country_res = transaction_data.get("country_residence", "N/A")
     country_code = transaction_data.get("country_code", "N/A")
     recipient_country = transaction_data.get("recipient_country", "N/A")
+    payer_country = transaction_data.get("payer_country", "N/A")
     city = transaction_data.get("city", "N/A")
     
     # Extract signals if provided
@@ -152,15 +152,17 @@ def build_user_message(transaction_data: Dict[str, Any]) -> str:
     if direction == "incoming":
         counterparty = transaction_data.get("payer", "N/A")
         bank = transaction_data.get("payer_bank", "N/A")
+        country_info = f"Payer Country: {payer_country}"
     else:
         counterparty = transaction_data.get("recipient", "N/A")
         bank = transaction_data.get("recipient_bank", "N/A")
+        country_info = f"Recipient Country: {recipient_country}"
     
     message = f"""**TRANSACTION TO ANALYZE:**
 
 Transaction ID: {txn_id}
 Direction: {direction}
-Amount: {amount_kzt:,.2f} KZT (Currency: {currency})
+Currency: {currency}
 
 **COUNTERPARTY INFORMATION:**
 Counterparty: {counterparty}
@@ -170,8 +172,8 @@ City: {city}
 
 **COUNTRY INFORMATION:**
 Country of Residence: {country_res}
-Country Code (from data): {country_code}
-Recipient Country: {recipient_country}
+Country Code: {country_code}
+{country_info}
 
 **LOCAL MATCHING SIGNALS:**
 SWIFT Extracted Country: {swift_country} ({swift_country_name})

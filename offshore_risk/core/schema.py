@@ -77,6 +77,7 @@ class TransactionInput(BaseModel):
     country_residence: Optional[str] = None
     country_code: Optional[str] = None
     recipient_country: Optional[str] = None
+    payer_country: Optional[str] = None
     city: Optional[str] = None
     payer: Optional[str] = None
     recipient: Optional[str] = None

@@ -117,7 +117,7 @@ Open your browser and navigate to `http://localhost:8000`
 - **Headers start at row 5** (use `skiprows=4` in pandas)
 - **Required columns** (in Russian):
   - №п/п
-  - Наименование бенефициара
+  - Наименование бенефициара (наш клиент)
   - Категория клиента
   - Страна резидентства
   - Гражданство
@@ -134,14 +134,14 @@ Open your browser and navigate to `http://localhost:8000`
   - Адрес банка плательщика
   - Состояние
   - Код страны
-  - Страна получателя
+  - Страна отправителя
 
 ### Outgoing Transactions File
 
 - **Headers start at row 6** (use `skiprows=5` in pandas)
 - **Required columns** (in Russian):
   - №п/п
-  - Наименование плательщика
+  - Наименование плательщика (наш клиент)
   - Категория клиента
   - Страна резидентства
   - Гражданство
@@ -186,7 +186,7 @@ Open your browser and navigate to `http://localhost:8000`
 
 **Example**:
 ```
-Итог: ОФШОР: ДА | Уверенность: 90% | Объяснение: SWIFT код банка указывает на Каймановы острова, что является офшорной юрисдикцией. | Совпадения: SWIFT: KY; Страна: Cayman Islands (KY) (1.00) | Источники: Нет источников
+Итог: ОФШОР: ДА | Уверенность: 90% | Объяснение: SWIFT код банка указывает на Каймановы острова, что является офшорной юрисдикцией. | Совпадения: SWIFT: KY; Страна: Cayman Islands (KY) (1.00) | Источники: if appropriate
 ```
 
 ### Output Files
@@ -370,17 +370,3 @@ Potential improvements:
 - [ ] Advanced analytics dashboard
 - [ ] Custom offshore jurisdiction lists per bank
 - [ ] Integration with bank core systems
-
-## 📄 License
-
-This project is proprietary software for internal bank use. Unauthorized distribution is prohibited.
-
-## 🤝 Support
-
-For issues or questions, contact the development team or refer to internal documentation.
-
----
-
-**Version**: 1.0.0  
-**Last Updated**: 2024-10-24  
-**Status**: Production Ready

@@ -129,10 +129,6 @@ def create_response_schema() -> Dict[str, Any]:
                 "enum": ["incoming", "outgoing"],
                 "description": "Transaction direction"
             },
-            "amount_kzt": {
-                "type": "number",
-                "description": "Transaction amount in KZT"
-            },
             "signals": {
                 "type": "object",
                 "properties": {
@@ -204,7 +200,7 @@ def create_response_schema() -> Dict[str, Any]:
             }
         },
         "required": [
-            "transaction_id", "direction", "amount_kzt", "signals",
+            "transaction_id", "direction", "signals",
             "classification", "reasoning_short_ru", "sources", "llm_error"
         ],
         "additionalProperties": False

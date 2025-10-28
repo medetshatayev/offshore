@@ -141,7 +141,8 @@ async def process_file(file_path: str, direction: str) -> dict:
         
         # Fuzzy matching
         country_code_match = fuzzy_match_country_code(txn.get("country_code"))
-        country_name_match = fuzzy_match_country_name(txn.get("recipient_country"))
+        country_name_to_match = txn.get("payer_country") if direction == "incoming" else txn.get("recipient_country")
+        country_name_match = fuzzy_match_country_name(country_name_to_match)
         city_match = fuzzy_match_city(txn.get("city"))
         
         # Aggregate signals

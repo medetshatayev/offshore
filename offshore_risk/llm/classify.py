@@ -50,6 +50,9 @@ def classify_transaction(
             temperature=temperature,
         )
         
+        # Re-insert amount for validation and export
+        llm_response["amount_kzt"] = transaction_data.get("amount_kzt", 0.0)
+        
         # Validate response with pydantic
         result = OffshoreRiskResponse(**llm_response)
         

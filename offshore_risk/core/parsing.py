@@ -79,17 +79,18 @@ def parse_excel_file(
     if not path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
     
-    # Determine skiprows based on direction
+    # Determine skiprows and engine based on direction and file extension
     skiprows = 4 if direction == "incoming" else 5
+    engine = "xlrd" if path.suffix.lower() == ".xls" else "openpyxl"
     
-    logger.info(f"Parsing {direction} transactions from {path.name} (skiprows={skiprows})")
+    logger.info(f"Parsing {direction} transactions from {path.name} (skiprows={skiprows}, engine={engine})")
     
     try:
-        # Read with UTF-8 encoding for Cyrillic support
+        # Read with appropriate engine
         df = pd.read_excel(
             file_path,
             skiprows=skiprows,
-            engine="openpyxl"
+            engine=engine
         )
         
         # Remove completely empty rows
