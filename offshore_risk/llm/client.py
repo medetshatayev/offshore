@@ -75,7 +75,7 @@ class OpenAIClientWrapper:
         request_params = {
             "model": OPENAI_MODEL,
             "input": input_text,
-            "tools": [{"type": "web_search_preview"}],
+            "tools": [{"type": "web_search"}],
             "tool_choice": "auto",
             "temperature": temperature,
         }
@@ -107,14 +107,14 @@ class OpenAIClientWrapper:
             if not content:
                 raise ValueError("Empty response from LLM")
             
-            # Strip markdown code blocks if present (LLM sometimes wraps JSON in ```json ... ```)
+            # Strip markdown code blocks if present
             content_stripped = content.strip()
             if content_stripped.startswith("```"):
-                # Remove opening ```json or ```
+                # Remove opening
                 lines = content_stripped.split('\n')
                 if lines[0].startswith("```"):
                     lines = lines[1:]
-                # Remove closing ```
+                # Remove closing
                 if lines and lines[-1].strip() == "```":
                     lines = lines[:-1]
                 content_stripped = '\n'.join(lines).strip()
