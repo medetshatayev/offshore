@@ -62,23 +62,21 @@ def format_result_column(response: OffshoreRiskResponse) -> str:
         
         signals_str = "; ".join(signals_parts) if signals_parts else "Нет совпадений"
         
-        # Format sources (limit to first 3 to avoid excessive length)
-        if response.sources:
-            sources_list = response.sources[:3]
-            sources_str = "; ".join(sources_list)
-            if len(response.sources) > 3:
-                sources_str += f" (+{len(response.sources) - 3} more)"
-        else:
-            sources_str = "Нет источников"
-        
         # Build final result string
         result = (
             f"Итог: {label_ru} | "
             f"Уверенность: {confidence_pct}% | "
             f"Объяснение: {response.reasoning_short_ru} | "
-            f"Совпадения: {signals_str} | "
-            f"Источники: {sources_str}"
+            f"Совпадения: {signals_str}"
         )
+        
+        # Only add sources if they exist
+        if response.sources and len(response.sources) > 0:
+            sources_list = response.sources[:3]
+            sources_str = "; ".join(sources_list)
+            if len(response.sources) > 3:
+                sources_str += f" (+{len(response.sources) - 3} more)"
+            result += f" | Источники: {sources_str}"
         
         # Add error if present
         if response.llm_error:
