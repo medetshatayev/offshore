@@ -20,8 +20,10 @@ def load_offshore_table() -> str:
         data_file = Path(__file__).parent.parent / "data" / "offshore_countries.md"
         
         if not data_file.exists():
-            logger.error(f"Offshore countries file not found: {data_file}")
-            return "ERROR: Offshore countries list not available"
+            error_msg = f"Offshore countries file not found: {data_file}"
+            logger.error(error_msg)
+            # Return a minimal table so the system doesn't completely fail
+            return "| Название | Код | English Name |\n|---|---|---|\n| ERROR | XX | Data file not found |"
         
         with open(data_file, "r", encoding="utf-8") as f:
             content = f.read()
@@ -30,11 +32,16 @@ def load_offshore_table() -> str:
         lines = content.split("\n")
         table_lines = [line for line in lines if "|" in line and line.strip()]
         
+        if not table_lines:
+            logger.error("No table content found in offshore countries file")
+            return "| Название | Код | English Name |\n|---|---|---|\n| ERROR | XX | No data found |"
+        
+        logger.info(f"Loaded offshore table with {len(table_lines)} lines")
         return "\n".join(table_lines)
     
     except Exception as e:
-        logger.error(f"Failed to load offshore table: {e}")
-        return "ERROR: Failed to load offshore countries list"
+        logger.error(f"Failed to load offshore table: {e}", exc_info=True)
+        return "| Название | Код | English Name |\n|---|---|---|\n| ERROR | XX | Failed to load data |"
 
 
 def build_system_prompt() -> str:

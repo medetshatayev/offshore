@@ -46,7 +46,7 @@ class OpenAIClientWrapper:
         temperature: float = 0.1,
     ) -> Dict[str, Any]:
         """
-        Call OpenAI API with structured output and optional web_search.
+        Call OpenAI API with structured output.
         
         Args:
             system_prompt: System instruction
@@ -60,66 +60,50 @@ class OpenAIClientWrapper:
         Raises:
             Exception: If API call fails after retries
         """
+        # Enhance system prompt with schema instructions
         system_prompt_with_schema = (
             f"{system_prompt}\n\n"
             "Please provide your response in a JSON format that strictly adheres to the following schema:\n"
-            f"{json.dumps(response_schema, indent=2)}"
+            f"{json.dumps(response_schema, indent=2)}\n\n"
+            "Respond ONLY with valid JSON, no additional text before or after."
         )
-        input_text = f"System: {system_prompt_with_schema}\nUser: {user_message}"
         
-        # Build request parameters
-        request_params = {
-            "model": OPENAI_MODEL,
-            "input": input_text,
-            "tools": [{"type": "web_search"}],
-            "tool_choice": "auto",
-        }
+        # Build request parameters for chat completions API
+        messages = [
+            {"role": "system", "content": system_prompt_with_schema},
+            {"role": "user", "content": user_message}
+        ]
         
         logger.debug(f"Calling OpenAI API with model={OPENAI_MODEL}, temperature={temperature}")
         
         try:
-            # Make API call
-            response = self.client.responses.create(**request_params)
+            # Make API call using chat completions
+            response = self.client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=messages,
+                temperature=temperature,
+                response_format={"type": "json_object"},
+                max_tokens=2000
+            )
             
-            # Extract response content and citations
-            content = None
-            citations = []
-            
-            for item in response.output:
-                if item.type == 'message':
-                    for content_item in item.content:
-                        if content_item.type == 'output_text':
-                            content = content_item.text
-                            # Extract citations if present
-                            if hasattr(content_item, 'citations') and content_item.citations:
-                                for citation in content_item.citations:
-                                    if hasattr(citation, 'url') and citation.url:
-                                        citations.append(citation.url)
-                            break
-                if content:
-                    break
-            
-            if not content:
+            # Extract response content
+            if not response.choices or not response.choices[0].message.content:
                 raise ValueError("Empty response from LLM")
             
+            content = response.choices[0].message.content.strip()
+            
+            # Parse JSON response
             result = json.loads(content)
             
-            # Add extracted citations to sources if they're not already there
-            if 'sources' in result:
-                # Merge citations with any sources the LLM might have added
-                existing_sources = result.get('sources', [])
-                all_sources = list(set(existing_sources + citations))
-                result['sources'] = all_sources
-                if citations:
-                    logger.debug(f"Extracted {len(citations)} citations from web_search")
-            
             logger.debug("Successfully parsed LLM JSON response")
+            logger.debug(f"Token usage - Prompt: {response.usage.prompt_tokens}, Completion: {response.usage.completion_tokens}")
             
             return result
         
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse LLM response as JSON: {e}")
-            raise
+            logger.error(f"Raw response: {content if 'content' in locals() else 'N/A'}")
+            raise ValueError(f"LLM returned invalid JSON: {e}")
         
         except Exception as e:
             logger.error(f"OpenAI API call failed: {e}")

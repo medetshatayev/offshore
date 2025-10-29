@@ -51,8 +51,12 @@ def calculate_similarity(s1: str, s2: str) -> float:
     if not s1_norm or not s2_norm:
         return 0.0
     
-    # Use Levenshtein ratio
-    return Levenshtein.ratio(s1_norm, s2_norm)
+    try:
+        # Use Levenshtein ratio
+        return Levenshtein.ratio(s1_norm, s2_norm)
+    except Exception as e:
+        logger.warning(f"Levenshtein calculation failed for '{s1}' vs '{s2}': {e}")
+        return 0.0
 
 
 def fuzzy_match_country_code(

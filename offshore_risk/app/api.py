@@ -220,16 +220,21 @@ async def process_files(
     incoming_path = Path(TEMP_STORAGE) / f"incoming_{incoming_file.filename}"
     outgoing_path = Path(TEMP_STORAGE) / f"outgoing_{outgoing_file.filename}"
     
+    # Track which files were successfully saved for cleanup
+    saved_files = []
+    
     try:
         # Save incoming file
         with open(incoming_path, "wb") as f:
             content = await incoming_file.read()
             f.write(content)
+        saved_files.append(incoming_path)
         
         # Save outgoing file
         with open(outgoing_path, "wb") as f:
             content = await outgoing_file.read()
             f.write(content)
+        saved_files.append(outgoing_path)
         
         logger.info("Files saved, starting processing...")
         
@@ -258,11 +263,14 @@ async def process_files(
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
     
     finally:
-        # Clean up uploaded files
-        for path in [incoming_path, outgoing_path]:
-            if path.exists():
-                path.unlink()
-                logger.debug(f"Cleaned up: {path}")
+        # Clean up uploaded files (only ones that were successfully saved)
+        for path in saved_files:
+            try:
+                if path.exists():
+                    path.unlink()
+                    logger.debug(f"Cleaned up: {path}")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup {path}: {cleanup_error}")
 
 
 @app.get("/download/{filename}")
@@ -276,7 +284,25 @@ async def download_file(filename: str):
     Returns:
         File response
     """
+    # Security: Validate filename to prevent path traversal
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    
+    # Only allow Excel files
+    if not filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Invalid file type")
+    
     file_path = Path(TEMP_STORAGE) / filename
+    
+    # Ensure the resolved path is within TEMP_STORAGE
+    try:
+        file_path = file_path.resolve()
+        temp_storage_resolved = Path(TEMP_STORAGE).resolve()
+        if not str(file_path).startswith(str(temp_storage_resolved)):
+            raise HTTPException(status_code=400, detail="Invalid file path")
+    except Exception as e:
+        logger.error(f"Path resolution error: {e}")
+        raise HTTPException(status_code=400, detail="Invalid file path")
     
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")

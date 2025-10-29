@@ -89,19 +89,37 @@ def extract_country_from_swift(swift_code: Optional[str]) -> Dict[str, Optional[
         return result
     
     # Clean and uppercase
-    swift_clean = swift_code.strip().upper().replace(" ", "")
+    swift_clean = swift_code.strip().upper().replace(" ", "").replace("-", "")
     
-    # SWIFT must be 8 or 11 characters
+    # Handle empty string after cleaning
+    if not swift_clean:
+        return result
+    
+    # SWIFT must be 8 or 11 characters and alphanumeric
     if len(swift_clean) not in [8, 11]:
         logger.debug(f"Invalid SWIFT length: {swift_code} (len={len(swift_clean)})")
+        return result
+    
+    # Validate first 4 chars are letters (bank code)
+    if not swift_clean[:4].isalpha():
+        logger.debug(f"Invalid SWIFT format - first 4 chars must be letters: {swift_code}")
         return result
     
     # Extract country code (positions 4-5, 0-indexed = slice [4:6])
     country_code = swift_clean[4:6]
     
-    # Validate country code
+    # Validate country code is letters
+    if not country_code.isalpha():
+        logger.debug(f"Invalid SWIFT format - country code must be letters: {swift_code}")
+        return result
+    
+    # Validate country code exists in our list
     if country_code not in VALID_COUNTRY_CODES:
-        logger.debug(f"Invalid country code in SWIFT: {swift_code} -> {country_code}")
+        logger.debug(f"Unknown country code in SWIFT: {swift_code} -> {country_code}")
+        # Still mark as potentially valid format, just unknown country
+        result["country_code"] = country_code
+        result["country_name"] = country_code  # Use code as name if unknown
+        result["is_valid_swift"] = True
         return result
     
     result["country_code"] = country_code
@@ -125,27 +143,46 @@ def load_offshore_codes() -> Set[str]:
         
         if not data_file.exists():
             logger.warning(f"Offshore countries file not found: {data_file}")
+            logger.warning("System will operate without offshore jurisdiction list")
             return set()
         
         offshore_codes = set()
         
         with open(data_file, "r", encoding="utf-8") as f:
-            for line in f:
-                # Parse markdown table lines
-                if "|" in line and not line.startswith("|:-"):
-                    parts = [p.strip() for p in line.split("|")]
-                    if len(parts) >= 3:
-                        # Second column (index 2) is the CODE
-                        code = parts[2].strip()
-                        # Validate it's a 2-letter code
-                        if code and len(code) == 2 and code.isalpha():
-                            offshore_codes.add(code.upper())
+            lines = f.readlines()
+            
+        if not lines:
+            logger.warning("Offshore countries file is empty")
+            return set()
         
-        logger.info(f"Loaded {len(offshore_codes)} offshore country codes")
+        for line_num, line in enumerate(lines, 1):
+            # Parse markdown table lines
+            if "|" in line and not line.startswith("|:-"):
+                parts = [p.strip() for p in line.split("|")]
+                if len(parts) >= 4:  # Need at least 4 parts for proper table format
+                    # Third column (index 2) is the CODE
+                    code = parts[2].strip()
+                    # Validate it's a 2-letter code
+                    if code and len(code) == 2 and code.isalpha() and code.upper() != "КОД":
+                        offshore_codes.add(code.upper())
+                    elif code and not code.isalpha() and code != "Код":
+                        logger.debug(f"Skipping invalid code at line {line_num}: '{code}'")
+        
+        if offshore_codes:
+            logger.info(f"Loaded {len(offshore_codes)} offshore country codes")
+        else:
+            logger.warning("No offshore country codes loaded from file")
+        
         return offshore_codes
     
+    except FileNotFoundError as e:
+        logger.error(f"Offshore countries file not found: {e}")
+        return set()
+    except PermissionError as e:
+        logger.error(f"Permission denied reading offshore countries file: {e}")
+        return set()
     except Exception as e:
-        logger.error(f"Failed to load offshore codes: {e}")
+        logger.error(f"Failed to load offshore codes: {e}", exc_info=True)
         return set()
 
 
