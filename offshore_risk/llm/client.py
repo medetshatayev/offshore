@@ -46,7 +46,7 @@ class OpenAIClientWrapper:
         temperature: float = 0.1,
     ) -> Dict[str, Any]:
         """
-        Call OpenAI API with structured output.
+        Call OpenAI Responses API with structured output and web_search.
         
         Args:
             system_prompt: System instruction
@@ -68,35 +68,59 @@ class OpenAIClientWrapper:
             "Respond ONLY with valid JSON, no additional text before or after."
         )
         
-        # Build request parameters for chat completions API
-        messages = [
-            {"role": "system", "content": system_prompt_with_schema},
-            {"role": "user", "content": user_message}
-        ]
+        # Build input combining system and user messages
+        input_text = f"System: {system_prompt_with_schema}\n\nUser: {user_message}"
         
-        logger.debug(f"Calling OpenAI API with model={OPENAI_MODEL}, temperature={temperature}")
+        # Build request parameters for Responses API
+        request_params = {
+            "model": OPENAI_MODEL,
+            "input": input_text,
+            "tools": [{"type": "web_search_preview"}],
+            "tool_choice": "auto",
+            "temperature": temperature,
+        }
+        
+        logger.debug(f"Calling OpenAI Responses API with model={OPENAI_MODEL}, temperature={temperature}")
         
         try:
-            # Make API call using chat completions
-            response = self.client.chat.completions.create(
-                model=OPENAI_MODEL,
-                messages=messages,
-                temperature=temperature,
-                response_format={"type": "json_object"},
-                max_tokens=2000
-            )
+            # Make API call using Responses API
+            response = self.client.responses.create(**request_params)
             
-            # Extract response content
-            if not response.choices or not response.choices[0].message.content:
+            # Extract response content and citations
+            content = None
+            citations = []
+            
+            for item in response.output:
+                if item.type == 'message':
+                    for content_item in item.content:
+                        if content_item.type == 'output_text':
+                            content = content_item.text
+                            # Extract URL citations from annotations
+                            if hasattr(content_item, 'annotations') and content_item.annotations:
+                                for annotation in content_item.annotations:
+                                    if annotation.type == 'url_citation' and hasattr(annotation, 'url'):
+                                        citations.append(annotation.url)
+                            break
+                if content:
+                    break
+            
+            if not content:
                 raise ValueError("Empty response from LLM")
-            
-            content = response.choices[0].message.content.strip()
             
             # Parse JSON response
             result = json.loads(content)
             
+            # Add extracted citations to sources if they're not already there
+            if 'sources' in result:
+                existing_sources = result.get('sources', [])
+                all_sources = list(set(existing_sources + citations))
+                result['sources'] = all_sources
+                if citations:
+                    logger.debug(f"Extracted {len(citations)} citations from web_search")
+            
             logger.debug("Successfully parsed LLM JSON response")
-            logger.debug(f"Token usage - Prompt: {response.usage.prompt_tokens}, Completion: {response.usage.completion_tokens}")
+            if hasattr(response, 'usage'):
+                logger.debug(f"Token usage - Input: {response.usage.input_tokens}, Output: {response.usage.output_tokens}")
             
             return result
         

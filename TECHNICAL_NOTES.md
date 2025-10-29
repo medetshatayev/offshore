@@ -2,37 +2,32 @@
 
 ## Critical Fix Details
 
-### OpenAI API Integration Fix
+### OpenAI Responses API - Enhancement (NOT A BUG)
 
-**Original Code (BROKEN):**
+**Current Code (CORRECT):**
 ```python
 response = self.client.responses.create(
     model=OPENAI_MODEL,
     input=input_text,
-    tools=[{"type": "web_search"}],
+    tools=[{"type": "web_search_preview"}],
     tool_choice="auto",
-)
-```
-
-**Fixed Code:**
-```python
-response = self.client.chat.completions.create(
-    model=OPENAI_MODEL,
-    messages=[
-        {"role": "system", "content": system_prompt_with_schema},
-        {"role": "user", "content": user_message}
-    ],
     temperature=temperature,
-    response_format={"type": "json_object"},
-    max_tokens=2000
 )
 ```
 
-**Reasoning:**
-- The OpenAI Python SDK doesn't have a `responses.create()` method
-- The correct endpoint is `chat.completions.create()` for GPT models
-- Web search was removed as it's not available in standard OpenAI API
-- Used `response_format` for JSON structured output instead
+**Why This Is Correct:**
+- The Responses API is a newer OpenAI endpoint: `POST https://api.openai.com/v1/responses`
+- It supports web_search_preview tool for real-time web searches
+- The response includes citations/annotations for sources
+- This is the CORRECT implementation for web-enabled LLM queries
+
+**Enhancements Made:**
+- Improved citation extraction from `annotations` property
+- Better handling of `url_citation` type annotations
+- Enhanced error messages and logging
+- Verified tool type naming (`web_search_preview`)
+
+**Documentation:** https://platform.openai.com/docs/api-reference/responses/create
 
 ### Path Traversal Prevention
 

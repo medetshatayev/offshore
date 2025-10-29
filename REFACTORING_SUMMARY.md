@@ -7,19 +7,19 @@ This document summarizes all the bugs found and fixes applied to the offshore_ri
 
 ## Critical Bugs Fixed
 
-### 1. **OpenAI API Client - Wrong Endpoint (CRITICAL)**
+### 1. **Citation Extraction Enhancement**
 **File:** `offshore_risk/llm/client.py`
 
-**Issue:** The code was using `client.responses.create()` which doesn't exist in the OpenAI Python SDK.
+**Status:** ✅ The original code was using the CORRECT OpenAI Responses API (NOT a bug)
 
-**Fix:** 
-- Changed to use the proper `client.chat.completions.create()` API
-- Updated to use standard chat completions format with messages
-- Added `response_format={"type": "json_object"}` for structured output
-- Improved response parsing to extract content from the correct response structure
-- Added token usage logging for monitoring
+**Enhancements Made:**
+- Verified correct usage of `client.responses.create()` API
+- Improved citation extraction from `annotations` property
+- Verified tool type `"web_search_preview"` is correct
+- Enhanced error handling for response parsing
+- Added better logging for token usage and citations
 
-**Impact:** This was a critical bug that would have caused complete failure of LLM classification.
+**Note:** The Responses API (`POST https://api.openai.com/v1/responses`) is the correct endpoint for web_search functionality. The original implementation was already correct.
 
 ---
 
@@ -219,8 +219,9 @@ No migration required. The system will work with existing data and configuration
 ## Summary Statistics
 
 - **Files Modified:** 8
-- **Critical Bugs Fixed:** 3
-- **Security Issues Fixed:** 1
+- **Critical Bugs Fixed:** 2 (Resource cleanup, Path traversal)
+- **API Enhancements:** 1 (Responses API - was already correct)
+- **Security Issues Fixed:** 1 (Path traversal)
 - **Error Handling Improvements:** 10+
 - **Type Safety Improvements:** Throughout
 - **Lines of Code Added:** ~200

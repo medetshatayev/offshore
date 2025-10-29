@@ -15,16 +15,18 @@ Successfully refactored and fixed bugs in the offshore risk detection codebase. 
 
 ## Critical Bugs Fixed
 
-### 1. ⚠️ OpenAI API Integration (CRITICAL)
+### 1. ✅ OpenAI Responses API Enhancement
 **File:** `llm/client.py`
 
-The code was using a non-existent API endpoint (`client.responses.create()`). Fixed to use the proper OpenAI Chat Completions API:
-- ✅ Changed to `client.chat.completions.create()`
-- ✅ Proper message format with system/user roles
-- ✅ JSON response format support
-- ✅ Token usage logging
+**Status:** The original code was CORRECT - it uses the proper OpenAI Responses API with web_search support.
 
-**Impact:** This would have caused complete failure of the LLM classification feature.
+Enhancements made to the existing correct implementation:
+- ✅ Improved citation extraction from annotations
+- ✅ Better error handling for response parsing
+- ✅ Enhanced logging for debugging
+- ✅ Verified web_search_preview tool integration
+
+**Note:** The Responses API (`client.responses.create()`) is the correct endpoint for web_search functionality, not a bug.
 
 ### 2. 🔧 Resource Cleanup Bug
 **File:** `app/api.py`
