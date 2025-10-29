@@ -26,18 +26,38 @@ def clean_amount_kzt(value: Any) -> Optional[float]:
     Returns:
         Normalized float value or None if invalid
     """
-    if pd.isna(value):
+    if pd.isna(value) or value is None:
         return None
     
     # Convert to string and clean
     amount_str = str(value).strip()
     
+    # Handle empty strings
+    if not amount_str:
+        return None
+    
     # Remove spaces and common thousands separators
     amount_str = amount_str.replace(" ", "").replace(",", "").replace("\xa0", "")
     
+    # Remove any non-numeric characters except decimal point and minus sign
+    # This handles cases like "5000000.00 KZT" or similar
+    cleaned = ""
+    for char in amount_str:
+        if char.isdigit() or char in [".", "-"]:
+            cleaned += char
+    
+    if not cleaned:
+        logger.warning(f"Failed to parse amount: '{value}' - no numeric content")
+        return None
+    
     # Try to convert to float
     try:
-        return float(amount_str)
+        result = float(cleaned)
+        # Validate reasonable range
+        if result < 0:
+            logger.warning(f"Negative amount detected: {result}, using absolute value")
+            return abs(result)
+        return result
     except (ValueError, TypeError) as e:
         logger.warning(f"Failed to parse amount: '{value}' -> {e}")
         return None
@@ -121,48 +141,62 @@ def normalize_transaction(
     Returns:
         Normalized transaction dictionary
     """
+    def safe_get(key: str, default: Any = None) -> Any:
+        """Safely get value from row, handling NaN and None."""
+        value = row.get(key, default)
+        if pd.isna(value):
+            return default
+        return value
+    
+    def safe_str(key: str, default: str = "") -> str:
+        """Safely convert value to string."""
+        value = safe_get(key, default)
+        if value is None or value == "":
+            return default
+        return str(value)
+    
     # Common fields
     normalized = {
-        "id": row.get("№п/п"),
+        "id": safe_str("№п/п", "unknown"),
         "direction": direction,
-        "amount_kzt": row.get("amount_kzt_normalized"),
-        "amount": row.get("Сумма"),
-        "currency": row.get("Валюта платежа"),
-        "value_date": str(row.get("Дата валютирования", "")),
-        "acceptance_date": str(row.get("Дата приема", "")),
-        "country_residence": row.get("Страна резидентства"),
-        "citizenship": row.get("Гражданство"),
-        "city": row.get("Город"),
-        "country_code": row.get("Код страны"),
-        "status": row.get("Состояние"),
-        "processed_at": row.get("processed_at")
+        "amount_kzt": safe_get("amount_kzt_normalized", 0.0),
+        "amount": safe_get("Сумма"),
+        "currency": safe_str("Валюта платежа"),
+        "value_date": safe_str("Дата валютирования"),
+        "acceptance_date": safe_str("Дата приема"),
+        "country_residence": safe_str("Страна резидентства"),
+        "citizenship": safe_str("Гражданство"),
+        "city": safe_str("Город"),
+        "country_code": safe_str("Код страны"),
+        "status": safe_str("Состояние"),
+        "processed_at": safe_str("processed_at")
     }
     
     # Direction-specific fields
     if direction == "incoming":
         normalized.update({
-            "beneficiary_name": row.get("Наименование бенефициара (наш клиент)"),
-            "beneficiary_account": row.get("Номер счета бенефициара"),
-            "payer": row.get("Плательщик"),
-            "payer_bank": row.get("Банк плательщика"),
-            "payer_bank_swift": row.get("SWIFT Банка плательщика"),
-            "payer_bank_address": row.get("Адрес банка плательщика"),
-            "client_category": row.get("Категория клиента"),
-            "payer_country": row.get("Страна отправителя")
+            "beneficiary_name": safe_str("Наименование бенефициара (наш клиент)"),
+            "beneficiary_account": safe_str("Номер счета бенефициара"),
+            "payer": safe_str("Плательщик"),
+            "payer_bank": safe_str("Банк плательщика"),
+            "payer_bank_swift": safe_str("SWIFT Банка плательщика"),
+            "payer_bank_address": safe_str("Адрес банка плательщика"),
+            "client_category": safe_str("Категория клиента"),
+            "payer_country": safe_str("Страна отправителя")
         })
-        normalized["swift_code"] = row.get("SWIFT Банка плательщика")
+        normalized["swift_code"] = safe_str("SWIFT Банка плательщика")
     else:  # outgoing
         normalized.update({
-            "payer_name": row.get("Наименование плательщика (наш клиент)"),
-            "payer_account": row.get("Номер счета плательщика"),
-            "recipient": row.get("Получатель"),
-            "recipient_bank": row.get("Банк получателя"),
-            "recipient_bank_swift": row.get("SWIFT Банка получателя"),
-            "recipient_bank_address": row.get("Адрес банка получателя"),
-            "payment_details": row.get("Детали платежа"),
-            "client_category": row.get("Категория клиента"),
-            "recipient_country": row.get("Страна получателя")
+            "payer_name": safe_str("Наименование плательщика (наш клиент)"),
+            "payer_account": safe_str("Номер счета плательщика"),
+            "recipient": safe_str("Получатель"),
+            "recipient_bank": safe_str("Банк получателя"),
+            "recipient_bank_swift": safe_str("SWIFT Банка получателя"),
+            "recipient_bank_address": safe_str("Адрес банка получателя"),
+            "payment_details": safe_str("Детали платежа"),
+            "client_category": safe_str("Категория клиента"),
+            "recipient_country": safe_str("Страна получателя")
         })
-        normalized["swift_code"] = row.get("SWIFT Банка получателя")
+        normalized["swift_code"] = safe_str("SWIFT Банка получателя")
     
     return normalized

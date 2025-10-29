@@ -46,7 +46,7 @@ class OpenAIClientWrapper:
         temperature: float = 0.1,
     ) -> Dict[str, Any]:
         """
-        Call OpenAI API with structured output and optional web_search.
+        Call OpenAI Responses API with structured output and web_search.
         
         Args:
             system_prompt: System instruction
@@ -60,25 +60,30 @@ class OpenAIClientWrapper:
         Raises:
             Exception: If API call fails after retries
         """
+        # Enhance system prompt with schema instructions
         system_prompt_with_schema = (
             f"{system_prompt}\n\n"
             "Please provide your response in a JSON format that strictly adheres to the following schema:\n"
-            f"{json.dumps(response_schema, indent=2)}"
+            f"{json.dumps(response_schema, indent=2)}\n\n"
+            "Respond ONLY with valid JSON, no additional text before or after."
         )
-        input_text = f"System: {system_prompt_with_schema}\nUser: {user_message}"
         
-        # Build request parameters
+        # Build input combining system and user messages
+        input_text = f"System: {system_prompt_with_schema}\n\nUser: {user_message}"
+        
+        # Build request parameters for Responses API
         request_params = {
             "model": OPENAI_MODEL,
             "input": input_text,
             "tools": [{"type": "web_search"}],
             "tool_choice": "auto",
+            "temperature": temperature,
         }
         
-        logger.debug(f"Calling OpenAI API with model={OPENAI_MODEL}, temperature={temperature}")
+        logger.debug(f"Calling OpenAI Responses API with model={OPENAI_MODEL}, temperature={temperature}")
         
         try:
-            # Make API call
+            # Make API call using Responses API
             response = self.client.responses.create(**request_params)
             
             # Extract response content and citations
@@ -90,11 +95,11 @@ class OpenAIClientWrapper:
                     for content_item in item.content:
                         if content_item.type == 'output_text':
                             content = content_item.text
-                            # Extract citations if present
-                            if hasattr(content_item, 'citations') and content_item.citations:
-                                for citation in content_item.citations:
-                                    if hasattr(citation, 'url') and citation.url:
-                                        citations.append(citation.url)
+                            # Extract URL citations from annotations
+                            if hasattr(content_item, 'annotations') and content_item.annotations:
+                                for annotation in content_item.annotations:
+                                    if annotation.type == 'url_citation' and hasattr(annotation, 'url'):
+                                        citations.append(annotation.url)
                             break
                 if content:
                     break
@@ -102,11 +107,23 @@ class OpenAIClientWrapper:
             if not content:
                 raise ValueError("Empty response from LLM")
             
-            result = json.loads(content)
+            # Strip markdown code blocks if present
+            content_stripped = content.strip()
+            if content_stripped.startswith("```"):
+                # Remove opening
+                lines = content_stripped.split('\n')
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                # Remove closing
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
+                content_stripped = '\n'.join(lines).strip()
+            
+            # Parse JSON response
+            result = json.loads(content_stripped)
             
             # Add extracted citations to sources if they're not already there
             if 'sources' in result:
-                # Merge citations with any sources the LLM might have added
                 existing_sources = result.get('sources', [])
                 all_sources = list(set(existing_sources + citations))
                 result['sources'] = all_sources
@@ -114,12 +131,17 @@ class OpenAIClientWrapper:
                     logger.debug(f"Extracted {len(citations)} citations from web_search")
             
             logger.debug("Successfully parsed LLM JSON response")
+            if hasattr(response, 'usage'):
+                logger.debug(f"Token usage - Input: {response.usage.input_tokens}, Output: {response.usage.output_tokens}")
             
             return result
         
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse LLM response as JSON: {e}")
-            raise
+            logger.error(f"Raw response: {content if 'content' in locals() else 'N/A'}")
+            if 'content_stripped' in locals() and content_stripped != content:
+                logger.error(f"After stripping markdown: {content_stripped}")
+            raise ValueError(f"LLM returned invalid JSON: {e}")
         
         except Exception as e:
             logger.error(f"OpenAI API call failed: {e}")

@@ -26,55 +26,67 @@ def format_result_column(response: OffshoreRiskResponse) -> str:
     Returns:
         Formatted result string
     """
-    # Translate label
-    label_ru = LABEL_TRANSLATIONS.get(response.classification.label, response.classification.label)
-    
-    # Format confidence as percentage
-    confidence_pct = int(response.classification.confidence * 100)
-    
-    # Build signals summary
-    signals_parts = []
-    
-    if response.signals.swift_country_code:
-        signals_parts.append(f"SWIFT: {response.signals.swift_country_code}")
-    
-    if response.signals.country_code_match.value:
-        signals_parts.append(
-            f"Код страны: {response.signals.country_code_match.value} "
-            f"({response.signals.country_code_match.score:.2f})"
+    try:
+        # Translate label
+        label_ru = LABEL_TRANSLATIONS.get(response.classification.label, response.classification.label)
+        
+        # Format confidence as percentage (with bounds checking)
+        confidence_pct = int(max(0, min(1, response.classification.confidence)) * 100)
+        
+        # Build signals summary
+        signals_parts = []
+        
+        if response.signals.swift_country_code:
+            signals_parts.append(f"SWIFT: {response.signals.swift_country_code}")
+        
+        if response.signals.country_code_match.value:
+            score = response.signals.country_code_match.score
+            score_str = f"{score:.2f}" if score is not None else "N/A"
+            signals_parts.append(
+                f"Код страны: {response.signals.country_code_match.value} ({score_str})"
+            )
+        
+        if response.signals.country_name_match.value:
+            score = response.signals.country_name_match.score
+            score_str = f"{score:.2f}" if score is not None else "N/A"
+            signals_parts.append(
+                f"Страна: {response.signals.country_name_match.value} ({score_str})"
+            )
+        
+        if response.signals.city_match.value:
+            score = response.signals.city_match.score
+            score_str = f"{score:.2f}" if score is not None else "N/A"
+            signals_parts.append(
+                f"Город: {response.signals.city_match.value} ({score_str})"
+            )
+        
+        signals_str = "; ".join(signals_parts) if signals_parts else "Нет совпадений"
+        
+        # Build final result string
+        result = (
+            f"Итог: {label_ru} | "
+            f"Уверенность: {confidence_pct}% | "
+            f"Объяснение: {response.reasoning_short_ru} | "
+            f"Совпадения: {signals_str}"
         )
+        
+        # Only add sources if they exist
+        if response.sources and len(response.sources) > 0:
+            sources_list = response.sources[:3]
+            sources_str = "; ".join(sources_list)
+            if len(response.sources) > 3:
+                sources_str += f" (+{len(response.sources) - 3} more)"
+            result += f" | Источники: {sources_str}"
+        
+        # Add error if present
+        if response.llm_error:
+            result += f" | ОШИБКА: {response.llm_error}"
+        
+        return result
     
-    if response.signals.country_name_match.value:
-        signals_parts.append(
-            f"Страна: {response.signals.country_name_match.value} "
-            f"({response.signals.country_name_match.score:.2f})"
-        )
-    
-    if response.signals.city_match.value:
-        signals_parts.append(
-            f"Город: {response.signals.city_match.value} "
-            f"({response.signals.city_match.score:.2f})"
-        )
-    
-    signals_str = "; ".join(signals_parts) if signals_parts else "Нет совпадений"
-    
-    # Format sources
-    sources_str = "; ".join(response.sources) if response.sources else "Нет источников"
-    
-    # Build final result string
-    result = (
-        f"Итог: {label_ru} | "
-        f"Уверенность: {confidence_pct}% | "
-        f"Объяснение: {response.reasoning_short_ru} | "
-        f"Совпадения: {signals_str} | "
-        f"Источники: {sources_str}"
-    )
-    
-    # Add error if present
-    if response.llm_error:
-        result += f" | ОШИБКА: {response.llm_error}"
-    
-    return result
+    except Exception as e:
+        logger.error(f"Error formatting result column: {e}")
+        return f"ОШИБКА ФОРМАТИРОВАНИЯ: {str(e)}"
 
 
 def export_to_excel(

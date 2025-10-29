@@ -254,7 +254,7 @@
             <div class="spinner"></div>
             <p><strong>Processing transactions...</strong></p>
             <p style="font-size: 13px; color: #718096; margin-top: 8px;">
-                This may take several minutes depending on the number of transactions.
+                This may take a while depending on the number of transactions. Please wait...
             </p>
         </div>
         
@@ -278,6 +278,51 @@
     </div>
     
     <script>
+        let statusCheckInterval = null;
+        
+        // On page load, check if there's an active job
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedJobId = localStorage.getItem('currentJobId');
+            if (savedJobId) {
+                console.log('Found saved job:', savedJobId);
+                // Check if job is still active
+                checkAndResumeJob(savedJobId);
+            }
+        });
+        
+        async function checkAndResumeJob(jobId) {
+            try {
+                const response = await fetch(`/status/${jobId}`);
+                if (!response.ok) {
+                    // Job not found, clear it
+                    localStorage.removeItem('currentJobId');
+                    return;
+                }
+                
+                const status = await response.json();
+                console.log('Resuming job:', status);
+                
+                if (status.status === 'queued' || status.status === 'processing') {
+                    // Job still active, resume polling
+                    document.getElementById('progress').classList.add('active');
+                    document.getElementById('submitBtn').disabled = true;
+                    await pollJobStatus(jobId);
+                } else if (status.status === 'completed') {
+                    // Job completed while user was away
+                    displayResults(status.result);
+                    localStorage.removeItem('currentJobId');
+                } else if (status.status === 'failed') {
+                    // Job failed
+                    document.getElementById('error').textContent = `Error: ${status.error || status.message}`;
+                    document.getElementById('error').classList.add('active');
+                    localStorage.removeItem('currentJobId');
+                }
+            } catch (error) {
+                console.error('Failed to resume job:', error);
+                localStorage.removeItem('currentJobId');
+            }
+        }
+        
         document.getElementById('uploadForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             
@@ -292,32 +337,107 @@
             document.getElementById('submitBtn').disabled = true;
             
             try {
+                // Submit files
                 const response = await fetch('/process', {
                     method: 'POST',
                     body: formData
                 });
                 
                 if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.detail || 'Processing failed');
+                    const errorText = await response.text();
+                    let errorMessage = 'Failed to start processing';
+                    try {
+                        const error = JSON.parse(errorText);
+                        errorMessage = error.detail || errorMessage;
+                    } catch {
+                        errorMessage = errorText || errorMessage;
+                    }
+                    throw new Error(errorMessage);
                 }
                 
                 const data = await response.json();
+                const jobId = data.job_id;
                 
-                // Hide progress
-                document.getElementById('progress').classList.remove('active');
+                console.log('Job started:', jobId);
                 
-                // Show results
-                displayResults(data);
+                // Save job ID to localStorage
+                localStorage.setItem('currentJobId', jobId);
+                
+                // Start polling for status
+                await pollJobStatus(jobId);
                 
             } catch (error) {
+                // Clear saved job on error
+                localStorage.removeItem('currentJobId');
+                
                 document.getElementById('progress').classList.remove('active');
                 document.getElementById('error').textContent = `Error: ${error.message}`;
                 document.getElementById('error').classList.add('active');
-            } finally {
                 document.getElementById('submitBtn').disabled = false;
             }
         });
+        
+        async function pollJobStatus(jobId) {
+            // Clear any existing interval
+            if (statusCheckInterval) {
+                clearInterval(statusCheckInterval);
+            }
+            
+            statusCheckInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/status/${jobId}`);
+                    
+                    if (!response.ok) {
+                        throw new Error('Failed to check status');
+                    }
+                    
+                    const status = await response.json();
+                    console.log('Job status:', status);
+                    
+                    // Update progress message
+                    const progressText = document.querySelector('#progress p:last-child');
+                    if (progressText) {
+                        progressText.textContent = status.message || 'Processing...';
+                    }
+                    
+                    if (status.status === 'completed') {
+                        // Stop polling
+                        clearInterval(statusCheckInterval);
+                        
+                        // Clear saved job
+                        localStorage.removeItem('currentJobId');
+                        
+                        // Hide progress
+                        document.getElementById('progress').classList.remove('active');
+                        
+                        // Show results
+                        displayResults(status.result);
+                        
+                        document.getElementById('submitBtn').disabled = false;
+                    } else if (status.status === 'failed') {
+                        // Stop polling
+                        clearInterval(statusCheckInterval);
+                        
+                        // Clear saved job
+                        localStorage.removeItem('currentJobId');
+                        
+                        // Hide progress
+                        document.getElementById('progress').classList.remove('active');
+                        
+                        // Show error
+                        document.getElementById('error').textContent = `Error: ${status.error || status.message}`;
+                        document.getElementById('error').classList.add('active');
+                        
+                        document.getElementById('submitBtn').disabled = false;
+                    }
+                    // Otherwise keep polling (queued/processing)
+                    
+                } catch (error) {
+                    console.error('Status check failed:', error);
+                    // Keep polling - temporary network issues shouldn't stop checking
+                }
+            }, 2000); // Poll every 2 seconds
+        }
         
         function displayResults(data) {
             const resultsDiv = document.getElementById('results');

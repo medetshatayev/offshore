@@ -20,8 +20,10 @@ def load_offshore_table() -> str:
         data_file = Path(__file__).parent.parent / "data" / "offshore_countries.md"
         
         if not data_file.exists():
-            logger.error(f"Offshore countries file not found: {data_file}")
-            return "ERROR: Offshore countries list not available"
+            error_msg = f"Offshore countries file not found: {data_file}"
+            logger.error(error_msg)
+            # Return a minimal table so the system doesn't completely fail
+            return "| Название | Код | English Name |\n|---|---|---|\n| ERROR | XX | Data file not found |"
         
         with open(data_file, "r", encoding="utf-8") as f:
             content = f.read()
@@ -30,11 +32,16 @@ def load_offshore_table() -> str:
         lines = content.split("\n")
         table_lines = [line for line in lines if "|" in line and line.strip()]
         
+        if not table_lines:
+            logger.error("No table content found in offshore countries file")
+            return "| Название | Код | English Name |\n|---|---|---|\n| ERROR | XX | No data found |"
+        
+        logger.info(f"Loaded offshore table with {len(table_lines)} lines")
         return "\n".join(table_lines)
     
     except Exception as e:
-        logger.error(f"Failed to load offshore table: {e}")
-        return "ERROR: Failed to load offshore countries list"
+        logger.error(f"Failed to load offshore table: {e}", exc_info=True)
+        return "| Название | Код | English Name |\n|---|---|---|\n| ERROR | XX | Failed to load data |"
 
 
 def build_system_prompt() -> str:
@@ -73,26 +80,31 @@ Any transaction involving these countries should be flagged as offshore:
 
 4. **Conservative Approach**: When uncertain, use OFFSHORE_SUSPECT rather than making assumptions. Provide clear reasoning.
 
-5. **Web Search Tool**: You may use the `web_search` tool when you need to:
-   - Verify a bank's country of domicile
-   - Look up SWIFT/BIC code information
-   - Check regulatory lists or sanctions
-   - Confirm if a jurisdiction has offshore status
+5. **Web Search Tool - WHEN TO USE**: You SHOULD use the `web_search` tool in these situations:
+   - **Ambiguous cases**: When signals are unclear or contradictory
+   - **Unknown banks**: To verify the actual country of domicile for the bank
+   - **Company verification**: To check if the counterparty company has offshore connections
+   - **Address verification**: To verify if the bank address or city suggests offshore activity
+   - **Suspicious patterns**: When company names, addresses, or bank names suggest possible offshore involvement but data is insufficient
+   - **SWIFT verification**: When SWIFT code indicates one country but other data suggests another
+   - **Edge cases**: Any situation where more context would help determine offshore risk
    
-   If you use web_search, you MUST cite the sources in the `sources` array. Only include canonical, authoritative URLs (no screenshots).
+   If you use web_search, you MUST cite the sources in the `sources` array. Only include canonical, authoritative URLs.
+   
+   **DO NOT include** "Нет источников" in your response - leave sources as empty array [] if not used.
 
 6. **Output Format**: You MUST return valid JSON that conforms to the schema provided. The response must include:
    - transaction_id, direction
    - signals (swift country, matches)
    - classification (label and confidence 0.0-1.0)
    - reasoning_short_ru (1-2 sentences in Russian explaining the decision)
-   - sources (array of URLs if web_search was used, empty array otherwise)
+   - sources (array of URLs if web_search was used, empty array [] otherwise - NEVER include text "Нет источников")
 
 **IMPORTANT**: 
 - Keep reasoning concise (1-2 sentences in Russian)
 - Confidence should reflect the strength of evidence (1.0 = definitive, 0.5 = uncertain)
 - Always provide valid JSON output
-- Use web_search sparingly and only when needed for verification
+- Use web_search proactively for ambiguous/suspicious cases to provide thorough analysis
 """
     
     return prompt
@@ -105,16 +117,28 @@ def build_websearch_system_prompt() -> str:
     Returns:
         Web search guidance prompt
     """
-    return """**WEB SEARCH USAGE:**
+    return """**WEB SEARCH GUIDANCE:**
 
-When using the web_search tool:
-- Keep queries focused and specific (e.g., "SWIFT code DEUTDEFF bank country", "Cayman Islands offshore jurisdiction")
-- Prefer authoritative sources: SWIFT.com, central banks, regulators, Wikipedia for country info
-- Cite only the URLs you actually used in your reasoning
-- Never include screenshots or images
-- Limit searches to what's necessary for the decision
+Use web_search proactively when:
+- You lack sufficient information to make a confident determination
+- Bank name, company name, or address suggests possible offshore ties
+- SWIFT country conflicts with other data
+- You need to verify if a company or bank has offshore operations
+- Transaction involves unfamiliar entities that might have offshore connections
 
-If you don't need web search to make a determination, skip it and rely on the provided signals."""
+Search query examples:
+- "Wells Fargo WFBIUS6S bank headquarters location"
+- "[Company Name] offshore operations company registration"
+- "[Bank Name] [City] offshore banking services"
+- "SWIFT code [CODE] bank country verification"
+
+When searching:
+- Use specific, focused queries
+- Prioritize authoritative sources (SWIFT.com, central banks, regulators, official company sites)
+- Cite ALL URLs you reference in the `sources` array
+- Never include "Нет источников" - use empty array [] if no search performed
+
+Remember: It's better to search and be thorough than to miss potential offshore involvement."""
 
 
 def build_user_message(transaction_data: Dict[str, Any]) -> str:

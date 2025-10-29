@@ -96,6 +96,10 @@ def parse_excel_file(
         # Remove completely empty rows
         df = df.dropna(how="all")
         
+        # Check if DataFrame is empty after cleanup
+        if len(df) == 0:
+            raise ValueError(f"File contains no data after removing empty rows")
+        
         logger.info(f"Successfully parsed {len(df)} rows from {path.name}")
         
         # Validate expected columns exist
