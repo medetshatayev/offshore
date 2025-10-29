@@ -278,6 +278,8 @@
     </div>
     
     <script>
+        let statusCheckInterval = null;
+        
         document.getElementById('uploadForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             
@@ -292,63 +294,95 @@
             document.getElementById('submitBtn').disabled = true;
             
             try {
+                // Submit files
                 const response = await fetch('/process', {
                     method: 'POST',
                     body: formData
                 });
                 
                 if (!response.ok) {
-                    console.error('Response not OK:', response.status, response.statusText);
                     const errorText = await response.text();
-                    console.error('Error response text:', errorText);
-                    let errorMessage = 'Processing failed';
+                    let errorMessage = 'Failed to start processing';
                     try {
                         const error = JSON.parse(errorText);
                         errorMessage = error.detail || errorMessage;
-                    } catch (parseError) {
-                        console.error('Failed to parse error response:', parseError);
+                    } catch {
                         errorMessage = errorText || errorMessage;
                     }
                     throw new Error(errorMessage);
                 }
                 
-                const responseText = await response.text();
-                console.log('Response received, length:', responseText.length);
-                if (!responseText) {
-                    throw new Error('Empty response from server');
-                }
+                const data = await response.json();
+                const jobId = data.job_id;
                 
-                let data;
-                try {
-                    data = JSON.parse(responseText);
-                    console.log('Parsed response:', data);
-                } catch (parseError) {
-                    console.error('Failed to parse response:', parseError);
-                    console.error('Response text:', responseText.substring(0, 500));
-                    throw new Error('Invalid JSON response from server');
-                }
+                console.log('Job started:', jobId);
                 
-                // Hide progress
-                document.getElementById('progress').classList.remove('active');
-                
-                // Show results
-                displayResults(data);
+                // Start polling for status
+                await pollJobStatus(jobId);
                 
             } catch (error) {
                 document.getElementById('progress').classList.remove('active');
-                let errorMessage = error.message;
-                
-                // Handle JSON parse errors
-                if (error.message.includes('JSON')) {
-                    errorMessage = 'Server response error. Please check the logs or contact support.';
-                }
-                
-                document.getElementById('error').textContent = `Error: ${errorMessage}`;
+                document.getElementById('error').textContent = `Error: ${error.message}`;
                 document.getElementById('error').classList.add('active');
-            } finally {
                 document.getElementById('submitBtn').disabled = false;
             }
         });
+        
+        async function pollJobStatus(jobId) {
+            // Clear any existing interval
+            if (statusCheckInterval) {
+                clearInterval(statusCheckInterval);
+            }
+            
+            statusCheckInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/status/${jobId}`);
+                    
+                    if (!response.ok) {
+                        throw new Error('Failed to check status');
+                    }
+                    
+                    const status = await response.json();
+                    console.log('Job status:', status);
+                    
+                    // Update progress message
+                    const progressText = document.querySelector('#progress p:last-child');
+                    if (progressText) {
+                        progressText.textContent = status.message || 'Processing...';
+                    }
+                    
+                    if (status.status === 'completed') {
+                        // Stop polling
+                        clearInterval(statusCheckInterval);
+                        
+                        // Hide progress
+                        document.getElementById('progress').classList.remove('active');
+                        
+                        // Show results
+                        displayResults(status.result);
+                        
+                        document.getElementById('submitBtn').disabled = false;
+                    } else if (status.status === 'failed') {
+                        // Stop polling
+                        clearInterval(statusCheckInterval);
+                        
+                        // Hide progress
+                        document.getElementById('progress').classList.remove('active');
+                        
+                        // Show error
+                        document.getElementById('error').textContent = `Error: ${status.error || status.message}`;
+                        document.getElementById('error').classList.add('active');
+                        
+                        document.getElementById('submitBtn').disabled = false;
+                    }
+                    // Otherwise keep polling (queued/processing)
+                    
+                } catch (error) {
+                    console.error('Status check failed:', error);
+                    // Keep polling - temporary network issues shouldn't stop checking
+                }
+            }, 2000); // Poll every 2 seconds
+        }
         
         function displayResults(data) {
             const resultsDiv = document.getElementById('results');

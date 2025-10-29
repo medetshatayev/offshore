@@ -4,10 +4,12 @@ Handles the main workflow: upload -> parse -> filter -> match -> LLM -> export.
 """
 import os
 import asyncio
+import uuid
 from pathlib import Path
-from typing import List
+from typing import List, Dict, Any
+from datetime import datetime
 import pandas as pd
-from fastapi import FastAPI, File, UploadFile, HTTPException, Request
+from fastapi import FastAPI, File, UploadFile, HTTPException, Request, BackgroundTasks
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -44,6 +46,9 @@ Path(TEMP_STORAGE).mkdir(parents=True, exist_ok=True)
 
 # Concurrency limit
 MAX_CONCURRENT_LLM = int(os.getenv("MAX_CONCURRENT_LLM_CALLS", "5"))
+
+# In-memory job storage (use Redis/DB in production)
+jobs: Dict[str, Dict[str, Any]] = {}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -176,11 +181,11 @@ async def process_file(file_path: str, direction: str) -> dict:
     
     # Run async processing with progress logging
     total = len(transactions_with_signals)
-    logger.info(f"Starting LLM classification for {total} transactions...")
+    logger.info(f"Starting LLM classification for {total} transactions in {direction} direction...")
     
     responses = await process_transaction_batch(transactions_with_signals, semaphore)
     
-    logger.info(f"Completed LLM classification for {len(responses)}/{total} transactions")
+    logger.info(f"Completed LLM classification for {len(responses)}/{total} transactions in {direction} direction")
     
     # 6. Export to Excel
     sheet_name = "Входящие операции" if direction == "incoming" else "Исходящие операции"
@@ -205,16 +210,71 @@ async def process_file(file_path: str, direction: str) -> dict:
     }
 
 
+async def process_files_background(
+    job_id: str,
+    incoming_path: Path,
+    outgoing_path: Path
+):
+    """Background task to process files."""
+    try:
+        jobs[job_id]["status"] = "processing"
+        jobs[job_id]["message"] = "Processing incoming transactions..."
+        
+        # Process incoming file
+        incoming_result = await process_file(str(incoming_path), "incoming")
+        jobs[job_id]["incoming_result"] = incoming_result
+        
+        jobs[job_id]["message"] = "Processing outgoing transactions..."
+        
+        # Process outgoing file
+        outgoing_result = await process_file(str(outgoing_path), "outgoing")
+        jobs[job_id]["outgoing_result"] = outgoing_result
+        
+        # Build final response
+        jobs[job_id]["status"] = "completed"
+        jobs[job_id]["message"] = "Processing completed successfully"
+        jobs[job_id]["result"] = {
+            "incoming": {
+                "filename": Path(incoming_result["output_path"]).name if incoming_result.get("output_path") else None,
+                "stats": incoming_result.get("stats", {})
+            },
+            "outgoing": {
+                "filename": Path(outgoing_result["output_path"]).name if outgoing_result.get("output_path") else None,
+                "stats": outgoing_result.get("stats", {})
+            }
+        }
+        
+        logger.info(f"Job {job_id} completed successfully")
+        
+    except Exception as e:
+        logger.error(f"Job {job_id} failed: {e}", exc_info=True)
+        jobs[job_id]["status"] = "failed"
+        jobs[job_id]["message"] = f"Processing failed: {str(e)}"
+        jobs[job_id]["error"] = str(e)
+    
+    finally:
+        # Clean up uploaded files
+        for path in [incoming_path, outgoing_path]:
+            try:
+                if path.exists():
+                    path.unlink()
+                    logger.debug(f"Cleaned up: {path}")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup {path}: {cleanup_error}")
+
+
 @app.post("/process")
 async def process_files(
+    background_tasks: BackgroundTasks,
     incoming_file: UploadFile = File(...),
     outgoing_file: UploadFile = File(...)
 ):
     """
-    Process both incoming and outgoing transaction files.
+    Accept files and start background processing.
+    Returns immediately with job ID.
     
     Returns:
-        JSON with download links and statistics
+        202 Accepted with job_id for status polling
     """
     logger.info(
         f"Received files: incoming={incoming_file.filename}, "
@@ -229,67 +289,92 @@ async def process_files(
                 detail=f"Invalid file type: {file.filename}. Only .xlsx and .xls are supported."
             )
     
-    # Save uploaded files temporarily
-    incoming_path = Path(TEMP_STORAGE) / f"incoming_{incoming_file.filename}"
-    outgoing_path = Path(TEMP_STORAGE) / f"outgoing_{outgoing_file.filename}"
+    # Generate job ID
+    job_id = str(uuid.uuid4())
     
-    # Track which files were successfully saved for cleanup
-    saved_files = []
+    # Save uploaded files temporarily
+    incoming_path = Path(TEMP_STORAGE) / f"{job_id}_incoming_{incoming_file.filename}"
+    outgoing_path = Path(TEMP_STORAGE) / f"{job_id}_outgoing_{outgoing_file.filename}"
     
     try:
         # Save incoming file
         with open(incoming_path, "wb") as f:
             content = await incoming_file.read()
             f.write(content)
-        saved_files.append(incoming_path)
         
         # Save outgoing file
         with open(outgoing_path, "wb") as f:
             content = await outgoing_file.read()
             f.write(content)
-        saved_files.append(outgoing_path)
         
-        logger.info("Files saved, starting processing...")
-        
-        # Process both files
-        incoming_result = await process_file(str(incoming_path), "incoming")
-        outgoing_result = await process_file(str(outgoing_path), "outgoing")
-        
-        # Build response
-        response = {
-            "status": "success",
-            "incoming": {
-                "filename": Path(incoming_result["output_path"]).name if incoming_result.get("output_path") else None,
-                "stats": incoming_result.get("stats", {})
-            },
-            "outgoing": {
-                "filename": Path(outgoing_result["output_path"]).name if outgoing_result.get("output_path") else None,
-                "stats": outgoing_result.get("stats", {})
-            }
+        # Initialize job status
+        jobs[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "message": "Files uploaded, starting processing...",
+            "created_at": datetime.utcnow().isoformat(),
+            "progress": 0
         }
         
-        logger.info("Processing completed successfully")
-        logger.info(f"Response: {response}")
-        return response
+        # Start background processing
+        background_tasks.add_task(
+            process_files_background,
+            job_id,
+            incoming_path,
+            outgoing_path
+        )
+        
+        logger.info(f"Job {job_id} queued for processing")
+        
+        # Return immediately with job ID
+        return {
+            "job_id": job_id,
+            "status": "accepted",
+            "message": "Processing started. Use job_id to check status."
+        }
     
-    except HTTPException:
-        # Re-raise HTTP exceptions as-is
-        raise
     except Exception as e:
-        logger.error(f"Processing failed: {e}", exc_info=True)
-        error_detail = f"Processing failed: {str(e)}"
-        logger.error(f"Returning error to client: {error_detail}")
-        raise HTTPException(status_code=500, detail=error_detail)
+        logger.error(f"Failed to queue job: {e}", exc_info=True)
+        # Clean up files if upload failed
+        for path in [incoming_path, outgoing_path]:
+            if path.exists():
+                path.unlink()
+        raise HTTPException(status_code=500, detail=f"Failed to start processing: {str(e)}")
+
+
+@app.get("/status/{job_id}")
+async def get_job_status(job_id: str):
+    """
+    Get status of a processing job.
     
-    finally:
-        # Clean up uploaded files (only ones that were successfully saved)
-        for path in saved_files:
-            try:
-                if path.exists():
-                    path.unlink()
-                    logger.debug(f"Cleaned up: {path}")
-            except Exception as cleanup_error:
-                logger.warning(f"Failed to cleanup {path}: {cleanup_error}")
+    Args:
+        job_id: Job identifier
+    
+    Returns:
+        Job status information
+    """
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job = jobs[job_id]
+    
+    # Build response based on status
+    response = {
+        "job_id": job_id,
+        "status": job["status"],
+        "message": job["message"],
+        "created_at": job.get("created_at")
+    }
+    
+    # Add result if completed
+    if job["status"] == "completed" and "result" in job:
+        response["result"] = job["result"]
+    
+    # Add error if failed
+    if job["status"] == "failed" and "error" in job:
+        response["error"] = job["error"]
+    
+    return response
 
 
 @app.get("/download/{filename}")
