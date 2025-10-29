@@ -254,7 +254,7 @@
             <div class="spinner"></div>
             <p><strong>Processing transactions...</strong></p>
             <p style="font-size: 13px; color: #718096; margin-top: 8px;">
-                This may take several minutes depending on the number of transactions.
+                This may take a while depending on the number of transactions. Please wait...
             </p>
         </div>
         
@@ -292,18 +292,10 @@
             document.getElementById('submitBtn').disabled = true;
             
             try {
-                // Create abort controller for custom timeout handling
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 600000); // 10 minute timeout
-                
                 const response = await fetch('/process', {
                     method: 'POST',
-                    body: formData,
-                    signal: controller.signal,
-                    keepalive: false
+                    body: formData
                 });
-                
-                clearTimeout(timeoutId);
                 
                 if (!response.ok) {
                     const errorText = await response.text();
@@ -334,11 +326,9 @@
                 document.getElementById('progress').classList.remove('active');
                 let errorMessage = error.message;
                 
-                // Handle different error types
-                if (error.name === 'AbortError') {
-                    errorMessage = 'Processing timeout (>10 minutes). The file may be too large. Please try with fewer transactions or contact support.';
-                } else if (error.message.includes('JSON')) {
-                    errorMessage = 'Server response error. Processing may still be ongoing on the server. Please check back in a few minutes or contact support.';
+                // Handle JSON parse errors
+                if (error.message.includes('JSON')) {
+                    errorMessage = 'Server response error. Please check the logs or contact support.';
                 }
                 
                 document.getElementById('error').textContent = `Error: ${errorMessage}`;

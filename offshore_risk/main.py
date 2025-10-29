@@ -44,7 +44,7 @@ def main():
         host=host,
         port=port,
         log_level=os.getenv("LOG_LEVEL", "info").lower(),
-        timeout_keep_alive=600,  # 10 minutes keep-alive
+        timeout_keep_alive=0,  # No timeout - keep connections alive indefinitely
         timeout_graceful_shutdown=30
     )
 
