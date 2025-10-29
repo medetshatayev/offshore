@@ -10,7 +10,7 @@ from typing import List, Dict, Any
 from datetime import datetime
 import pandas as pd
 from fastapi import FastAPI, File, UploadFile, HTTPException, Request, BackgroundTasks
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -61,6 +61,12 @@ async def index(request: Request):
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "service": "offshore_risk"}
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    """Return empty response for favicon to avoid 404 errors."""
+    return Response(status_code=204)
 
 
 async def process_transaction_batch(
