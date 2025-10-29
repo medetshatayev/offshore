@@ -298,23 +298,35 @@
                 });
                 
                 if (!response.ok) {
+                    console.error('Response not OK:', response.status, response.statusText);
                     const errorText = await response.text();
+                    console.error('Error response text:', errorText);
                     let errorMessage = 'Processing failed';
                     try {
                         const error = JSON.parse(errorText);
                         errorMessage = error.detail || errorMessage;
-                    } catch {
+                    } catch (parseError) {
+                        console.error('Failed to parse error response:', parseError);
                         errorMessage = errorText || errorMessage;
                     }
                     throw new Error(errorMessage);
                 }
                 
                 const responseText = await response.text();
+                console.log('Response received, length:', responseText.length);
                 if (!responseText) {
                     throw new Error('Empty response from server');
                 }
                 
-                const data = JSON.parse(responseText);
+                let data;
+                try {
+                    data = JSON.parse(responseText);
+                    console.log('Parsed response:', data);
+                } catch (parseError) {
+                    console.error('Failed to parse response:', parseError);
+                    console.error('Response text:', responseText.substring(0, 500));
+                    throw new Error('Invalid JSON response from server');
+                }
                 
                 // Hide progress
                 document.getElementById('progress').classList.remove('active');

@@ -128,11 +128,13 @@ async def process_file(file_path: str, direction: str) -> dict:
     
     if len(df_filtered) == 0:
         logger.warning("No transactions meet the threshold criteria")
-        return {
+        result = {
             "output_path": None,
             "stats": {**stats, "filtered_count": 0, "processed_count": 0},
             "error": "No transactions meet the 5,000,000 KZT threshold"
         }
+        logger.info(f"Returning result: {result}")
+        return result
     
     # 3. Add metadata
     df_filtered = add_metadata(df_filtered, direction)
@@ -257,21 +259,27 @@ async def process_files(
         response = {
             "status": "success",
             "incoming": {
-                "filename": Path(incoming_result["output_path"]).name if incoming_result["output_path"] else None,
-                "stats": incoming_result["stats"]
+                "filename": Path(incoming_result["output_path"]).name if incoming_result.get("output_path") else None,
+                "stats": incoming_result.get("stats", {})
             },
             "outgoing": {
-                "filename": Path(outgoing_result["output_path"]).name if outgoing_result["output_path"] else None,
-                "stats": outgoing_result["stats"]
+                "filename": Path(outgoing_result["output_path"]).name if outgoing_result.get("output_path") else None,
+                "stats": outgoing_result.get("stats", {})
             }
         }
         
         logger.info("Processing completed successfully")
+        logger.info(f"Response: {response}")
         return response
     
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
         logger.error(f"Processing failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+        error_detail = f"Processing failed: {str(e)}"
+        logger.error(f"Returning error to client: {error_detail}")
+        raise HTTPException(status_code=500, detail=error_detail)
     
     finally:
         # Clean up uploaded files (only ones that were successfully saved)
