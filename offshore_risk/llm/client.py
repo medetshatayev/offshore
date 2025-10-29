@@ -107,8 +107,20 @@ class OpenAIClientWrapper:
             if not content:
                 raise ValueError("Empty response from LLM")
             
+            # Strip markdown code blocks if present (LLM sometimes wraps JSON in ```json ... ```)
+            content_stripped = content.strip()
+            if content_stripped.startswith("```"):
+                # Remove opening ```json or ```
+                lines = content_stripped.split('\n')
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                # Remove closing ```
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
+                content_stripped = '\n'.join(lines).strip()
+            
             # Parse JSON response
-            result = json.loads(content)
+            result = json.loads(content_stripped)
             
             # Add extracted citations to sources if they're not already there
             if 'sources' in result:
@@ -127,6 +139,8 @@ class OpenAIClientWrapper:
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse LLM response as JSON: {e}")
             logger.error(f"Raw response: {content if 'content' in locals() else 'N/A'}")
+            if 'content_stripped' in locals() and content_stripped != content:
+                logger.error(f"After stripping markdown: {content_stripped}")
             raise ValueError(f"LLM returned invalid JSON: {e}")
         
         except Exception as e:
