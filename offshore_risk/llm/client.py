@@ -81,13 +81,20 @@ class OpenAIClientWrapper:
             # Make API call
             response = self.client.responses.create(**request_params)
             
-            # Extract response content
+            # Extract response content and citations
             content = None
+            citations = []
+            
             for item in response.output:
                 if item.type == 'message':
                     for content_item in item.content:
                         if content_item.type == 'output_text':
                             content = content_item.text
+                            # Extract citations if present
+                            if hasattr(content_item, 'citations') and content_item.citations:
+                                for citation in content_item.citations:
+                                    if hasattr(citation, 'url') and citation.url:
+                                        citations.append(citation.url)
                             break
                 if content:
                     break
@@ -96,6 +103,16 @@ class OpenAIClientWrapper:
                 raise ValueError("Empty response from LLM")
             
             result = json.loads(content)
+            
+            # Add extracted citations to sources if they're not already there
+            if 'sources' in result:
+                # Merge citations with any sources the LLM might have added
+                existing_sources = result.get('sources', [])
+                all_sources = list(set(existing_sources + citations))
+                result['sources'] = all_sources
+                if citations:
+                    logger.debug(f"Extracted {len(citations)} citations from web_search")
+            
             logger.debug("Successfully parsed LLM JSON response")
             
             return result
