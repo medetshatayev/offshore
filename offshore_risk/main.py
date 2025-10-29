@@ -43,9 +43,7 @@ def main():
         app,
         host=host,
         port=port,
-        log_level=os.getenv("LOG_LEVEL", "info").lower(),
-        timeout_keep_alive=0,  # No timeout - keep connections alive indefinitely
-        timeout_graceful_shutdown=30
+        log_level=os.getenv("LOG_LEVEL", "info").lower()
     )
 
 
