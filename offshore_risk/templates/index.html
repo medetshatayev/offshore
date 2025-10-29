@@ -292,17 +292,37 @@
             document.getElementById('submitBtn').disabled = true;
             
             try {
+                // Create abort controller for custom timeout handling
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 600000); // 10 minute timeout
+                
                 const response = await fetch('/process', {
                     method: 'POST',
-                    body: formData
+                    body: formData,
+                    signal: controller.signal,
+                    keepalive: false
                 });
                 
+                clearTimeout(timeoutId);
+                
                 if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.detail || 'Processing failed');
+                    const errorText = await response.text();
+                    let errorMessage = 'Processing failed';
+                    try {
+                        const error = JSON.parse(errorText);
+                        errorMessage = error.detail || errorMessage;
+                    } catch {
+                        errorMessage = errorText || errorMessage;
+                    }
+                    throw new Error(errorMessage);
                 }
                 
-                const data = await response.json();
+                const responseText = await response.text();
+                if (!responseText) {
+                    throw new Error('Empty response from server');
+                }
+                
+                const data = JSON.parse(responseText);
                 
                 // Hide progress
                 document.getElementById('progress').classList.remove('active');
@@ -312,7 +332,16 @@
                 
             } catch (error) {
                 document.getElementById('progress').classList.remove('active');
-                document.getElementById('error').textContent = `Error: ${error.message}`;
+                let errorMessage = error.message;
+                
+                // Handle different error types
+                if (error.name === 'AbortError') {
+                    errorMessage = 'Processing timeout (>10 minutes). The file may be too large. Please try with fewer transactions or contact support.';
+                } else if (error.message.includes('JSON')) {
+                    errorMessage = 'Server response error. Processing may still be ongoing on the server. Please check back in a few minutes or contact support.';
+                }
+                
+                document.getElementById('error').textContent = `Error: ${errorMessage}`;
                 document.getElementById('error').classList.add('active');
             } finally {
                 document.getElementById('submitBtn').disabled = false;

@@ -72,13 +72,21 @@ async def process_transaction_batch(
     Returns:
         List of classification responses
     """
-    async def process_single(txn):
+    total = len(transactions)
+    completed = [0]  # Use list to allow modification in nested function
+    
+    async def process_single(txn, idx):
         async with semaphore:
             # Run LLM classification in thread pool (since it's synchronous)
             loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, classify_transaction, txn)
+            result = await loop.run_in_executor(None, classify_transaction, txn)
+            completed[0] += 1
+            # Log progress every 10 transactions
+            if completed[0] % 10 == 0 or completed[0] == total:
+                logger.info(f"Progress: {completed[0]}/{total} transactions processed")
+            return result
     
-    tasks = [process_single(txn) for txn in transactions]
+    tasks = [process_single(txn, i) for i, txn in enumerate(transactions)]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
     # Convert exceptions to error responses
@@ -164,10 +172,13 @@ async def process_file(file_path: str, direction: str) -> dict:
     # Create semaphore for concurrency control
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_LLM)
     
-    # Run async processing
+    # Run async processing with progress logging
+    total = len(transactions_with_signals)
+    logger.info(f"Starting LLM classification for {total} transactions...")
+    
     responses = await process_transaction_batch(transactions_with_signals, semaphore)
     
-    logger.info(f"Completed LLM classification for {len(responses)} transactions")
+    logger.info(f"Completed LLM classification for {len(responses)}/{total} transactions")
     
     # 6. Export to Excel
     sheet_name = "Входящие операции" if direction == "incoming" else "Исходящие операции"
