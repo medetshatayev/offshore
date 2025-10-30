@@ -2,9 +2,11 @@
 Excel file parsing with Cyrillic header support.
 Handles both incoming and outgoing transaction formats.
 """
-import pandas as pd
 from pathlib import Path
-from typing import Literal, Dict, Any
+from typing import Any, Dict, Literal
+
+import pandas as pd
+
 from core.logger import setup_logger
 
 logger = setup_logger(__name__)

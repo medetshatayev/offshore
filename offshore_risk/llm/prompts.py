@@ -3,7 +3,8 @@ System and user prompts for LLM offshore risk classification.
 Loads offshore jurisdictions table and builds prompts dynamically.
 """
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
+
 from core.logger import setup_logger
 
 logger = setup_logger(__name__)

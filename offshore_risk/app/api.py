@@ -2,30 +2,31 @@
 FastAPI routes for file upload and processing.
 Handles the main workflow: upload -> parse -> filter -> match -> LLM -> export.
 """
-import os
 import asyncio
+import os
 import uuid
-from pathlib import Path
-from typing import List, Dict, Any
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List
+
 import pandas as pd
-from fastapi import FastAPI, File, UploadFile, HTTPException, Request, BackgroundTasks
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response
-from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from core.exporters import export_to_excel, create_output_filename
 from core.logger import setup_logger
-from core.parsing import parse_excel_file, validate_dataframe
-from core.normalize import filter_by_threshold, add_metadata, normalize_transaction
-from core.swift import extract_country_from_swift
 from core.matching import (
+    aggregate_matching_signals,
+    fuzzy_match_city,
     fuzzy_match_country_code,
     fuzzy_match_country_name,
-    fuzzy_match_city,
-    aggregate_matching_signals
 )
-from core.exporters import export_to_excel, create_output_filename
-from llm.classify import classify_transaction
+from core.normalize import add_metadata, filter_by_threshold
+from core.parsing import parse_excel_file, validate_dataframe
+from core.schema import OffshoreRiskResponse
+from core.swift import extract_country_from_swift
+from llm.classify import classify_transaction, create_error_response
 
 logger = setup_logger(__name__)
 
@@ -69,6 +70,59 @@ async def favicon():
     return Response(status_code=204)
 
 
+def build_classification_statistics(responses: List[OffshoreRiskResponse]) -> Dict[str, int]:
+    """
+    Build classification statistics from LLM responses.
+    
+    Args:
+        responses: List of classification responses
+    
+    Returns:
+        Dictionary with counts per classification label
+    """
+    classification_counts = {}
+    for resp in responses:
+        label = resp.classification.label
+        classification_counts[label] = classification_counts.get(label, 0) + 1
+    return classification_counts
+
+
+def extract_transaction_signals(row: pd.Series, direction: str) -> dict:
+    """
+    Extract matching signals for a single transaction.
+    
+    Args:
+        row: Transaction row from DataFrame
+        direction: Transaction direction ("incoming" or "outgoing")
+    
+    Returns:
+        Transaction dictionary with normalized data and signals
+    """
+    # Normalize transaction
+    from core.normalize import normalize_transaction
+    txn = normalize_transaction(row, direction)
+    
+    # Extract SWIFT country
+    swift_country = extract_country_from_swift(txn.get("swift_code"))
+    
+    # Fuzzy matching
+    country_code_match = fuzzy_match_country_code(txn.get("country_code"))
+    country_name_to_match = txn.get("payer_country") if direction == "incoming" else txn.get("recipient_country")
+    country_name_match = fuzzy_match_country_name(country_name_to_match)
+    city_match = fuzzy_match_city(txn.get("city"))
+    
+    # Aggregate signals
+    signals = aggregate_matching_signals(
+        swift_country,
+        country_code_match,
+        country_name_match,
+        city_match
+    )
+    
+    txn["signals"] = signals
+    return txn
+
+
 async def process_transaction_batch(
     transactions: List[dict],
     semaphore: asyncio.Semaphore
@@ -101,7 +155,6 @@ async def process_transaction_batch(
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
     # Convert exceptions to error responses
-    from llm.classify import create_error_response
     processed_results = []
     for i, result in enumerate(results):
         if isinstance(result, Exception):
@@ -151,31 +204,10 @@ async def process_file(file_path: str, direction: str) -> dict:
     df_filtered = add_metadata(df_filtered, direction)
     
     # 4. Process each transaction: normalize -> extract signals -> classify
-    transactions_with_signals = []
-    
-    for idx, row in df_filtered.iterrows():
-        # Normalize transaction
-        txn = normalize_transaction(row, direction)
-        
-        # Extract SWIFT country
-        swift_country = extract_country_from_swift(txn.get("swift_code"))
-        
-        # Fuzzy matching
-        country_code_match = fuzzy_match_country_code(txn.get("country_code"))
-        country_name_to_match = txn.get("payer_country") if direction == "incoming" else txn.get("recipient_country")
-        country_name_match = fuzzy_match_country_name(country_name_to_match)
-        city_match = fuzzy_match_city(txn.get("city"))
-        
-        # Aggregate signals
-        signals = aggregate_matching_signals(
-            swift_country,
-            country_code_match,
-            country_name_match,
-            city_match
-        )
-        
-        txn["signals"] = signals
-        transactions_with_signals.append(txn)
+    transactions_with_signals = [
+        extract_transaction_signals(row, direction)
+        for idx, row in df_filtered.iterrows()
+    ]
     
     logger.info(f"Prepared {len(transactions_with_signals)} transactions with signals")
     
@@ -200,10 +232,7 @@ async def process_file(file_path: str, direction: str) -> dict:
     export_to_excel(df_filtered, responses, output_path, sheet_name)
     
     # Build statistics
-    classification_counts = {}
-    for resp in responses:
-        label = resp.classification.label
-        classification_counts[label] = classification_counts.get(label, 0) + 1
+    classification_counts = build_classification_statistics(responses)
     
     return {
         "output_path": output_path,

@@ -3,8 +3,10 @@ Simple fuzzy matching for country names, codes, and cities.
 Uses substring and Levenshtein similarity for short tokens.
 """
 import os
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, Optional
+
 import Levenshtein
+
 from core.logger import setup_logger
 from core.swift import OFFSHORE_COUNTRY_CODES, COUNTRY_CODE_TO_NAME
 
@@ -12,6 +14,14 @@ logger = setup_logger(__name__)
 
 # Fuzzy match threshold from env or default
 FUZZY_THRESHOLD = float(os.getenv("FUZZY_MATCH_THRESHOLD", "0.80"))
+
+# Known offshore financial centers for city matching
+OFFSHORE_CITIES = [
+    "george town", "road town", "bridgetown", "nassau", "hamilton",
+    "panama city", "manama", "douglas", "port louis", "victoria",
+    "gibraltar", "andorra la vella", "monaco", "vaduz", "san marino",
+    "hong kong", "singapore", "dubai", "macao"
+]
 
 
 def normalize_string(text: Optional[str]) -> str:
@@ -194,16 +204,8 @@ def fuzzy_match_city(
     if not city_norm or len(city_norm) < 3:
         return result
     
-    # Known offshore financial centers (partial list)
-    offshore_cities = [
-        "george town", "road town", "bridgetown", "nassau", "hamilton",
-        "panama city", "manama", "douglas", "port louis", "victoria",
-        "gibraltar", "andorra la vella", "monaco", "vaduz", "san marino",
-        "hong kong", "singapore", "dubai", "macao"
-    ]
-    
-    # Check for matches
-    for offshore_city in offshore_cities:
+    # Check for matches against known offshore cities
+    for offshore_city in OFFSHORE_CITIES:
         if city_norm in offshore_city or offshore_city in city_norm:
             result["value"] = offshore_city.title()
             result["score"] = 1.0

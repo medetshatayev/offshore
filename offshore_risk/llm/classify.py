@@ -2,8 +2,10 @@
 Transaction classification using LLM with structured output.
 Handles per-transaction LLM calls with error handling.
 """
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
 from pydantic import ValidationError
+
 from core.logger import setup_logger
 from core.schema import OffshoreRiskResponse
 from llm.client import get_client, create_response_schema

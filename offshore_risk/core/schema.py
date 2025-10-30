@@ -2,7 +2,8 @@
 Pydantic schemas for request/response validation.
 Defines strict JSON schema for LLM structured output.
 """
-from typing import Optional, List, Literal
+from typing import List, Literal, Optional
+
 from pydantic import BaseModel, Field, field_validator
 
 

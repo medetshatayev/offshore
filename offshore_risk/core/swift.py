@@ -2,9 +2,9 @@
 SWIFT/BIC code handling and country extraction.
 Format: BANKCODE(4) + COUNTRYCODE(2) + LOCATIONCODE(2) + [BRANCHCODE(3)]
 """
-import os
-from typing import Optional, Dict, Any, Set
 from pathlib import Path
+from typing import Any, Dict, Optional, Set
+
 from core.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -131,6 +131,53 @@ def extract_country_from_swift(swift_code: Optional[str]) -> Dict[str, Optional[
     return result
 
 
+def is_valid_country_code(code: str) -> bool:
+    """
+    Validate if a string is a valid 2-letter country code.
+    
+    Args:
+        code: String to validate
+    
+    Returns:
+        True if valid country code format, False otherwise
+    """
+    return (
+        len(code) == 2 and 
+        code.isalpha() and 
+        code.upper() not in ["КОД", "КО"]  # Exclude Russian header text
+    )
+
+
+def parse_offshore_table_line(line: str) -> Optional[str]:
+    """
+    Parse a single line from the offshore countries markdown table.
+    
+    Args:
+        line: Line from markdown file
+    
+    Returns:
+        Country code if valid, None otherwise
+    """
+    # Skip separator lines and non-table lines
+    if not line or "|" not in line or line.startswith("|:-"):
+        return None
+    
+    # Split by pipe and extract columns
+    parts = [p.strip() for p in line.split("|")]
+    
+    # Need at least 4 parts for proper table format: | Name | Code | English |
+    if len(parts) < 4:
+        return None
+    
+    # Third column (index 2) contains the country code
+    code = parts[2].strip()
+    
+    if code and is_valid_country_code(code):
+        return code.upper()
+    
+    return None
+
+
 def load_offshore_codes() -> Set[str]:
     """
     Load offshore country codes from data file.
@@ -138,35 +185,26 @@ def load_offshore_codes() -> Set[str]:
     Returns:
         Set of ISO 2-letter country codes
     """
+    data_file = Path(__file__).parent.parent / "data" / "offshore_countries.md"
+    
+    if not data_file.exists():
+        logger.warning(f"Offshore countries file not found: {data_file}")
+        logger.warning("System will operate without offshore jurisdiction list")
+        return set()
+    
     try:
-        data_file = Path(__file__).parent.parent / "data" / "offshore_countries.md"
-        
-        if not data_file.exists():
-            logger.warning(f"Offshore countries file not found: {data_file}")
-            logger.warning("System will operate without offshore jurisdiction list")
-            return set()
-        
-        offshore_codes = set()
-        
         with open(data_file, "r", encoding="utf-8") as f:
             lines = f.readlines()
-            
+        
         if not lines:
             logger.warning("Offshore countries file is empty")
             return set()
         
-        for line_num, line in enumerate(lines, 1):
-            # Parse markdown table lines
-            if "|" in line and not line.startswith("|:-"):
-                parts = [p.strip() for p in line.split("|")]
-                if len(parts) >= 4:  # Need at least 4 parts for proper table format
-                    # Third column (index 2) is the CODE
-                    code = parts[2].strip()
-                    # Validate it's a 2-letter code
-                    if code and len(code) == 2 and code.isalpha() and code.upper() != "КОД":
-                        offshore_codes.add(code.upper())
-                    elif code and not code.isalpha() and code != "Код":
-                        logger.debug(f"Skipping invalid code at line {line_num}: '{code}'")
+        # Parse each line and collect valid codes
+        offshore_codes = {
+            code for line in lines 
+            if (code := parse_offshore_table_line(line)) is not None
+        }
         
         if offshore_codes:
             logger.info(f"Loaded {len(offshore_codes)} offshore country codes")
@@ -175,9 +213,6 @@ def load_offshore_codes() -> Set[str]:
         
         return offshore_codes
     
-    except FileNotFoundError as e:
-        logger.error(f"Offshore countries file not found: {e}")
-        return set()
     except PermissionError as e:
         logger.error(f"Permission denied reading offshore countries file: {e}")
         return set()
