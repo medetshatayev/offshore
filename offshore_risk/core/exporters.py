@@ -5,12 +5,53 @@ Handles both incoming and outgoing transaction outputs.
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import Any, Dict, List
+
 import pandas as pd
+
 from core.logger import setup_logger
 from core.schema import OffshoreRiskResponse, LABEL_TRANSLATIONS
 
 logger = setup_logger(__name__)
+
+
+def format_signals_summary(signals: Any) -> str:
+    """
+    Format signals into a readable summary string.
+    
+    Args:
+        signals: TransactionSignals object from response
+    
+    Returns:
+        Formatted string with all matching signals
+    """
+    signals_parts = []
+    
+    if signals.swift_country_code:
+        signals_parts.append(f"SWIFT: {signals.swift_country_code}")
+    
+    if signals.country_code_match.value:
+        score = signals.country_code_match.score
+        score_str = f"{score:.2f}" if score is not None else "N/A"
+        signals_parts.append(
+            f"Код страны: {signals.country_code_match.value} ({score_str})"
+        )
+    
+    if signals.country_name_match.value:
+        score = signals.country_name_match.score
+        score_str = f"{score:.2f}" if score is not None else "N/A"
+        signals_parts.append(
+            f"Страна: {signals.country_name_match.value} ({score_str})"
+        )
+    
+    if signals.city_match.value:
+        score = signals.city_match.score
+        score_str = f"{score:.2f}" if score is not None else "N/A"
+        signals_parts.append(
+            f"Город: {signals.city_match.value} ({score_str})"
+        )
+    
+    return "; ".join(signals_parts) if signals_parts else "Нет совпадений"
 
 
 def format_result_column(response: OffshoreRiskResponse) -> str:
@@ -34,33 +75,7 @@ def format_result_column(response: OffshoreRiskResponse) -> str:
         confidence_pct = int(max(0, min(1, response.classification.confidence)) * 100)
         
         # Build signals summary
-        signals_parts = []
-        
-        if response.signals.swift_country_code:
-            signals_parts.append(f"SWIFT: {response.signals.swift_country_code}")
-        
-        if response.signals.country_code_match.value:
-            score = response.signals.country_code_match.score
-            score_str = f"{score:.2f}" if score is not None else "N/A"
-            signals_parts.append(
-                f"Код страны: {response.signals.country_code_match.value} ({score_str})"
-            )
-        
-        if response.signals.country_name_match.value:
-            score = response.signals.country_name_match.score
-            score_str = f"{score:.2f}" if score is not None else "N/A"
-            signals_parts.append(
-                f"Страна: {response.signals.country_name_match.value} ({score_str})"
-            )
-        
-        if response.signals.city_match.value:
-            score = response.signals.city_match.score
-            score_str = f"{score:.2f}" if score is not None else "N/A"
-            signals_parts.append(
-                f"Город: {response.signals.city_match.value} ({score_str})"
-            )
-        
-        signals_str = "; ".join(signals_parts) if signals_parts else "Нет совпадений"
+        signals_str = format_signals_summary(response.signals)
         
         # Build final result string
         result = (

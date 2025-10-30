@@ -2,11 +2,13 @@
 OpenAI client with web_search tool integration.
 Handles API calls with retries and structured output.
 """
-import os
 import json
-from typing import Dict, Any, Optional
+import os
+from typing import Any, Dict, Optional
+
 from openai import OpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
 from core.logger import setup_logger
 from core.schema import OffshoreRiskResponse
 
@@ -14,7 +16,7 @@ logger = setup_logger(__name__)
 
 # OpenAI configuration from environment
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 OPENAI_TIMEOUT = int(os.getenv("OPENAI_TIMEOUT", "60"))
 
 

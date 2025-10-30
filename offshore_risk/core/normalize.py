@@ -3,10 +3,11 @@ Data normalization and metadata enrichment.
 Handles currency conversion, amount cleaning, and transaction metadata.
 """
 import os
-import re
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
+
 import pandas as pd
+
 from core.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -141,62 +142,62 @@ def normalize_transaction(
     Returns:
         Normalized transaction dictionary
     """
-    def safe_get(key: str, default: Any = None) -> Any:
+    def get_value_or_default(key: str, default: Any = None) -> Any:
         """Safely get value from row, handling NaN and None."""
         value = row.get(key, default)
         if pd.isna(value):
             return default
         return value
     
-    def safe_str(key: str, default: str = "") -> str:
-        """Safely convert value to string."""
-        value = safe_get(key, default)
+    def get_string_or_default(key: str, default: str = "") -> str:
+        """Safely convert value to string, returning default if empty or None."""
+        value = get_value_or_default(key, default)
         if value is None or value == "":
             return default
         return str(value)
     
     # Common fields
     normalized = {
-        "id": safe_str("№п/п", "unknown"),
+        "id": get_string_or_default("№п/п", "unknown"),
         "direction": direction,
-        "amount_kzt": safe_get("amount_kzt_normalized", 0.0),
-        "amount": safe_get("Сумма"),
-        "currency": safe_str("Валюта платежа"),
-        "value_date": safe_str("Дата валютирования"),
-        "acceptance_date": safe_str("Дата приема"),
-        "country_residence": safe_str("Страна резидентства"),
-        "citizenship": safe_str("Гражданство"),
-        "city": safe_str("Город"),
-        "country_code": safe_str("Код страны"),
-        "status": safe_str("Состояние"),
-        "processed_at": safe_str("processed_at")
+        "amount_kzt": get_value_or_default("amount_kzt_normalized", 0.0),
+        "amount": get_value_or_default("Сумма"),
+        "currency": get_string_or_default("Валюта платежа"),
+        "value_date": get_string_or_default("Дата валютирования"),
+        "acceptance_date": get_string_or_default("Дата приема"),
+        "country_residence": get_string_or_default("Страна резидентства"),
+        "citizenship": get_string_or_default("Гражданство"),
+        "city": get_string_or_default("Город"),
+        "country_code": get_string_or_default("Код страны"),
+        "status": get_string_or_default("Состояние"),
+        "processed_at": get_string_or_default("processed_at")
     }
     
     # Direction-specific fields
     if direction == "incoming":
         normalized.update({
-            "beneficiary_name": safe_str("Наименование бенефициара (наш клиент)"),
-            "beneficiary_account": safe_str("Номер счета бенефициара"),
-            "payer": safe_str("Плательщик"),
-            "payer_bank": safe_str("Банк плательщика"),
-            "payer_bank_swift": safe_str("SWIFT Банка плательщика"),
-            "payer_bank_address": safe_str("Адрес банка плательщика"),
-            "client_category": safe_str("Категория клиента"),
-            "payer_country": safe_str("Страна отправителя")
+            "beneficiary_name": get_string_or_default("Наименование бенефициара (наш клиент)"),
+            "beneficiary_account": get_string_or_default("Номер счета бенефициара"),
+            "payer": get_string_or_default("Плательщик"),
+            "payer_bank": get_string_or_default("Банк плательщика"),
+            "payer_bank_swift": get_string_or_default("SWIFT Банка плательщика"),
+            "payer_bank_address": get_string_or_default("Адрес банка плательщика"),
+            "client_category": get_string_or_default("Категория клиента"),
+            "payer_country": get_string_or_default("Страна отправителя")
         })
-        normalized["swift_code"] = safe_str("SWIFT Банка плательщика")
+        normalized["swift_code"] = get_string_or_default("SWIFT Банка плательщика")
     else:  # outgoing
         normalized.update({
-            "payer_name": safe_str("Наименование плательщика (наш клиент)"),
-            "payer_account": safe_str("Номер счета плательщика"),
-            "recipient": safe_str("Получатель"),
-            "recipient_bank": safe_str("Банк получателя"),
-            "recipient_bank_swift": safe_str("SWIFT Банка получателя"),
-            "recipient_bank_address": safe_str("Адрес банка получателя"),
-            "payment_details": safe_str("Детали платежа"),
-            "client_category": safe_str("Категория клиента"),
-            "recipient_country": safe_str("Страна получателя")
+            "payer_name": get_string_or_default("Наименование плательщика (наш клиент)"),
+            "payer_account": get_string_or_default("Номер счета плательщика"),
+            "recipient": get_string_or_default("Получатель"),
+            "recipient_bank": get_string_or_default("Банк получателя"),
+            "recipient_bank_swift": get_string_or_default("SWIFT Банка получателя"),
+            "recipient_bank_address": get_string_or_default("Адрес банка получателя"),
+            "payment_details": get_string_or_default("Детали платежа"),
+            "client_category": get_string_or_default("Категория клиента"),
+            "recipient_country": get_string_or_default("Страна получателя")
         })
-        normalized["swift_code"] = safe_str("SWIFT Банка получателя")
+        normalized["swift_code"] = get_string_or_default("SWIFT Банка получателя")
     
     return normalized

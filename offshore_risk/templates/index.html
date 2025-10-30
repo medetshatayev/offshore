@@ -363,6 +363,10 @@
                 // Save job ID to localStorage
                 localStorage.setItem('currentJobId', jobId);
                 
+                // Reset file inputs to prevent reprocessing
+                document.getElementById('incomingFile').value = '';
+                document.getElementById('outgoingFile').value = '';
+                
                 // Start polling for status
                 await pollJobStatus(jobId);
                 
