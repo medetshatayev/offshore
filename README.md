@@ -40,7 +40,7 @@ offshore_risk/
 │   ├── client.py              # OpenAI Responses API client with web_search
 │   └── classify.py            # Per-transaction LLM classification with error handling
 ├── data/
-│   └── offshore_countries.md  # 77 offshore jurisdictions (Russian/English/codes)
+│   └── offshore_countries.md  # 74 offshore jurisdictions (Russian/English/codes)
 ├── templates/
 │   └── index.html             # Interactive web UI with job polling and localStorage
 ├── main.py                    # Application entry point
@@ -53,18 +53,33 @@ offshore_risk/
 
 ### Prerequisites
 
-- Python 3.12+ (tested with 3.12)
+- **Docker & Docker Compose** (recommended) or Python 3.12+
 - OpenAI API key with access to GPT-4o or GPT-5 models
-- pip for package management
 
-### Installation
+### Option 1: Docker (Recommended)
+
+1. **Create environment file**:
+   ```bash
+   cp .env.example .env
+   # Edit .env and add your OpenAI API key
+   ```
+
+2. **Build and run with Docker Compose**:
+   ```bash
+   docker-compose up --build
+   ```
+
+3. **Access the application**:
+   Open `http://localhost:8000` in your browser
+
+### Option 2: Local Python Installation
 
 1. **Navigate to project directory**:
    ```bash
    cd offshore_risk
    ```
 
-2. **Create virtual environment** (recommended):
+2. **Create virtual environment**:
    ```bash
    python -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
@@ -81,37 +96,75 @@ offshore_risk/
    # Edit .env and add your OpenAI API key
    ```
 
+5. **Run the application**:
+   ```bash
+   python main.py
+   ```
+
 ### Configuration
 
-Edit `.env` file with your settings:
+Edit `.env` file with your settings. All variables except `OPENAI_API_KEY` are optional:
+
+| Variable                   | Default              | Description                                 |
+|----------------------------|----------------------|---------------------------------------------|
+| `OPENAI_API_KEY`           | *(required)*         | Your OpenAI API key                         |
+| `OPENAI_MODEL`             | `gpt-4.1`            | Model to use (gpt-4.1, etc.)                |
+| `OPENAI_TIMEOUT`           | `120`                | API timeout in seconds                      |
+| `TEMP_STORAGE_PATH`        | `/tmp/offshore_risk` | Temporary file storage                      |
+| `LOG_LEVEL`                | `INFO`               | Logging level (DEBUG, INFO, WARNING, ERROR) |
+| `MAX_CONCURRENT_LLM_CALLS` | `5`                  | Parallel LLM request limit                  |
+| `AMOUNT_THRESHOLD_KZT`     | `5000000`            | Minimum transaction amount filter           |
+| `FUZZY_MATCH_THRESHOLD`    | `0.8`                | Fuzzy matching threshold (0.0-1.0)          |
+| `HOST`                     | `0.0.0.0`            | Server bind address                         |
+| `PORT`                     | `8000`               | Server port                                 |
+
+## 🐳 Docker Usage
+
+### Building the Image
 
 ```bash
-# Required
-OPENAI_API_KEY=your_openai_api_key_here
-
-# Optional (defaults shown)
-OPENAI_MODEL=gpt-4o              # Model to use (gpt-4o, gpt-5, etc.)
-OPENAI_TIMEOUT=60                # API timeout in seconds
-TEMP_STORAGE_PATH=/tmp/offshore_risk  # Temporary file storage
-LOG_LEVEL=INFO                   # Logging level (DEBUG, INFO, WARNING, ERROR)
-MAX_CONCURRENT_LLM_CALLS=5       # Parallel LLM request limit
-AMOUNT_THRESHOLD_KZT=5000000     # Minimum transaction amount filter
-FUZZY_MATCH_THRESHOLD=0.80       # Fuzzy matching threshold (0.0-1.0)
-HOST=0.0.0.0                     # Server bind address
-PORT=8000                        # Server port
+docker build -t offshore-risk .
 ```
 
-### Running the Application
+### Running with Docker Compose
 
-**Start the web server**:
+Start the application:
 ```bash
-python main.py
+docker-compose up -d
 ```
 
-The application will start on `http://0.0.0.0:8000`
+View logs:
+```bash
+docker-compose logs -f
+```
 
-**Access the web interface**:
-Open your browser and navigate to `http://localhost:8000`
+Stop the application:
+```bash
+docker-compose down
+```
+
+### Running with Docker
+
+Run the container directly:
+```bash
+docker run -d \
+  -p 8000:8000 \
+  --env-file .env \
+  -v $(pwd)/data:/app/data:ro \
+  --name offshore-risk \
+  offshore-risk
+```
+
+Access logs:
+```bash
+docker logs -f offshore-risk
+```
+
+Stop the container:
+```bash
+docker stop offshore-risk
+docker rm offshore-risk
+```
 
 ## 📊 Input File Formats
 
