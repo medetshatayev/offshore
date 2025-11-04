@@ -1,7 +1,6 @@
 """
 Main entry point for the offshore risk detection application.
 """
-import os
 import sys
 from pathlib import Path
 
@@ -10,6 +9,9 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 from dotenv import load_dotenv
+
+from core.config import get_settings
+from core.exceptions import ConfigurationError
 from core.logger import setup_logger
 
 # Load environment variables
@@ -24,27 +26,38 @@ logger = setup_logger(__name__)
 
 def main():
     """Main application entry point."""
-    import uvicorn
-    from app.api import app
+    try:
+        # Load and validate configuration
+        settings = get_settings()
+        
+        import uvicorn
+        from app.api import app
+        
+        logger.info("Starting Offshore Risk Detection Service")
+        logger.info(f"OpenAI Model: {settings.openai_model}")
+        logger.info(f"Log Level: {settings.log_level}")
+        logger.info(f"Amount Threshold: {settings.amount_threshold_kzt:,.0f} KZT")
+        logger.info(f"Max Concurrent LLM Calls: {settings.max_concurrent_llm_calls}")
+        logger.info(f"Temp Storage: {settings.temp_storage_path}")
+        
+        logger.info(f"Starting server on {settings.host}:{settings.port}")
+        
+        uvicorn.run(
+            app,
+            host=settings.host,
+            port=settings.port,
+            log_level=settings.log_level.lower()
+        )
     
-    logger.info("Starting Offshore Risk Detection Service")
-    logger.info(f"OpenAI Model: {os.getenv('OPENAI_MODEL', 'gpt-4o')}")
-    logger.info(f"Log Level: {os.getenv('LOG_LEVEL', 'INFO')}")
-    logger.info(f"Amount Threshold: {os.getenv('AMOUNT_THRESHOLD_KZT', '5000000')} KZT")
-    logger.info(f"Max Concurrent LLM Calls: {os.getenv('MAX_CONCURRENT_LLM_CALLS', '5')}")
+    except ConfigurationError as e:
+        logger.error(f"Configuration error: {e.message}")
+        if e.details:
+            logger.error(f"Details: {e.details}")
+        sys.exit(1)
     
-    # Start server
-    port = int(os.getenv("PORT", "8000"))
-    host = os.getenv("HOST", "0.0.0.0")
-    
-    logger.info(f"Starting server on {host}:{port}")
-    
-    uvicorn.run(
-        app,
-        host=host,
-        port=port,
-        log_level=os.getenv("LOG_LEVEL", "info").lower()
-    )
+    except Exception as e:
+        logger.error(f"Failed to start application: {e}", exc_info=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

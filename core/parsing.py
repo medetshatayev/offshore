@@ -7,6 +7,8 @@ from typing import Any, Dict, Literal
 
 import pandas as pd
 
+from core.config import get_settings
+from core.exceptions import ParsingError, DataNotFoundError
 from core.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -74,12 +76,15 @@ def parse_excel_file(
         DataFrame with parsed transactions
     
     Raises:
-        ValueError: If file format is invalid
-        FileNotFoundError: If file doesn't exist
+        DataNotFoundError: If file doesn't exist
+        ParsingError: If file format is invalid
     """
     path = Path(file_path)
     if not path.exists():
-        raise FileNotFoundError(f"File not found: {file_path}")
+        raise DataNotFoundError(
+            f"File not found: {file_path}",
+            details={"file_path": file_path}
+        )
     
     # Determine skiprows and engine based on direction and file extension
     skiprows = 4 if direction == "incoming" else 5
@@ -100,7 +105,10 @@ def parse_excel_file(
         
         # Check if DataFrame is empty after cleanup
         if len(df) == 0:
-            raise ValueError(f"File contains no data after removing empty rows")
+            raise ParsingError(
+                "File contains no data after removing empty rows",
+                details={"file_path": file_path, "direction": direction}
+            )
         
         logger.info(f"Successfully parsed {len(df)} rows from {path.name}")
         
@@ -115,9 +123,14 @@ def parse_excel_file(
         
         return df
     
+    except ParsingError:
+        raise
     except Exception as e:
         logger.error(f"Failed to parse {file_path}: {str(e)}")
-        raise ValueError(f"Invalid Excel format for {direction} transactions: {str(e)}")
+        raise ParsingError(
+            f"Invalid Excel format for {direction} transactions",
+            details={"file_path": file_path, "direction": direction, "error": str(e)}
+        )
 
 
 def validate_dataframe(
