@@ -70,7 +70,19 @@ Required environment variables:
 | `AMOUNT_THRESHOLD_KZT`     | `5000000`            | Minimum transaction amount filter    |
 | `PORT`                     | `8000`               | Server port                          |
 
-## 🔄 Latest Changes
+## 🔄 Recent Updates
+
+### Code Refactoring (2025-11-04)
+
+The codebase has been refactored for improved maintainability:
+
+- **Service Layer**: Business logic extracted to `services/transaction_service.py`
+- **Configuration**: Centralized, type-safe settings in `core/config.py`
+- **Error Handling**: Custom exceptions with rich context in `core/exceptions.py`
+- **Code Quality**: Added type hints, improved documentation, reduced API layer by 30%
+- **Testing**: Test infrastructure with pytest, example unit tests in `tests/`
+
+Run tests: `pytest`
 
 ### Simplified LLM Input
 
@@ -231,7 +243,8 @@ The LLM automatically uses web search to verify:
 - `pandas` & `openpyxl` - Excel processing
 - `openai` - LLM classification
 - `python-Levenshtein` - Fuzzy matching
-- `pydantic` - Data validation
+- `pydantic` & `pydantic-settings` - Data validation and configuration
+- `pytest` - Testing framework
 
 See `requirements.txt` for complete list with versions.
 
@@ -240,8 +253,12 @@ See `requirements.txt` for complete list with versions.
 ```
 offshore/
 ├── app/
-│   └── api.py              # FastAPI routes and job processing
+│   └── api.py              # FastAPI routes (HTTP layer only)
+├── services/
+│   └── transaction_service.py  # Business logic
 ├── core/
+│   ├── config.py           # Centralized configuration
+│   ├── exceptions.py       # Custom exception hierarchy
 │   ├── parsing.py          # Excel parsing
 │   ├── normalize.py        # Data cleaning and filtering
 │   ├── swift.py            # SWIFT code handling
@@ -253,6 +270,9 @@ offshore/
 │   ├── prompts.py          # Prompt building
 │   ├── client.py           # OpenAI client
 │   └── classify.py         # Transaction classification
+├── tests/
+│   ├── test_config.py      # Configuration tests
+│   └── test_exceptions.py  # Exception tests
 ├── data/
 │   └── offshore_countries.md  # Offshore jurisdictions list
 ├── templates/
