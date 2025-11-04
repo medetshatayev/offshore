@@ -1,6 +1,9 @@
 """
-Simple fuzzy matching for country names, codes, and cities.
+Bilingual fuzzy matching for country names, codes, and cities.
 Uses substring and Levenshtein similarity for short tokens.
+
+All offshore data loaded from data/offshore_countries.md (single source of truth).
+Supports both Russian and English names for country/city matching.
 """
 import os
 from typing import Any, Dict, Optional
@@ -8,20 +11,12 @@ from typing import Any, Dict, Optional
 import Levenshtein
 
 from core.logger import setup_logger
-from core.swift import OFFSHORE_COUNTRY_CODES, COUNTRY_CODE_TO_NAME
+from core.swift import OFFSHORE_COUNTRY_CODES, OFFSHORE_COUNTRY_NAMES_RU, OFFSHORE_COUNTRY_NAMES_EN
 
 logger = setup_logger(__name__)
 
 # Fuzzy match threshold from env or default
 FUZZY_THRESHOLD = float(os.getenv("FUZZY_MATCH_THRESHOLD", "0.80"))
-
-# Known offshore financial centers for city matching
-OFFSHORE_CITIES = [
-    "george town", "road town", "bridgetown", "nassau", "hamilton",
-    "panama city", "manama", "douglas", "port louis", "victoria",
-    "gibraltar", "andorra la vella", "monaco", "vaduz", "san marino",
-    "hong kong", "singapore", "dubai", "macao"
-]
 
 
 def normalize_string(text: Optional[str]) -> str:
@@ -132,12 +127,18 @@ def fuzzy_match_country_name(
     if not name_norm or len(name_norm) < 3:
         return result
     
-    # Build list of offshore country names
+    # Build list of offshore country names from markdown file (both Russian and English)
     offshore_names = []
     for code in OFFSHORE_COUNTRY_CODES:
-        country_name = COUNTRY_CODE_TO_NAME.get(code, "")
-        if country_name:
-            offshore_names.append((code, country_name))
+        # Add Russian name (most transaction data uses Russian)
+        rus_name = OFFSHORE_COUNTRY_NAMES_RU.get(code, "")
+        if rus_name:
+            offshore_names.append((code, rus_name))
+        
+        # Add English name (for English language transactions)
+        eng_name = OFFSHORE_COUNTRY_NAMES_EN.get(code, "")
+        if eng_name and eng_name != rus_name:  # Avoid duplicates
+            offshore_names.append((code, eng_name))
     
     # Calculate similarities
     matches = []
@@ -204,23 +205,36 @@ def fuzzy_match_city(
     if not city_norm or len(city_norm) < 3:
         return result
     
-    # Check for matches against known offshore cities
-    for offshore_city in OFFSHORE_CITIES:
-        if city_norm in offshore_city or offshore_city in city_norm:
-            result["value"] = offshore_city.title()
+    # Match city against offshore country names from markdown file
+    offshore_city_names = []
+    
+    for code in OFFSHORE_COUNTRY_CODES:
+        # Add English name
+        eng_name = OFFSHORE_COUNTRY_NAMES_EN.get(code, "")
+        if eng_name:
+            offshore_city_names.append(eng_name.lower())
+        
+        # Also add Russian name for completeness
+        rus_name = OFFSHORE_COUNTRY_NAMES_RU.get(code, "")
+        if rus_name:
+            offshore_city_names.append(rus_name.lower())
+    
+    for offshore_name in offshore_city_names:
+        if city_norm in offshore_name or offshore_name in city_norm:
+            result["value"] = offshore_name.title()
             result["score"] = 1.0
             result["is_suspicious"] = True
-            logger.debug(f"City '{city}' matched offshore city: {offshore_city}")
+            logger.debug(f"City '{city}' matched offshore jurisdiction: {offshore_name}")
             return result
         
         # Fuzzy match only for short city names
         if len(city_norm) < 20:
-            similarity = calculate_similarity(city_norm, offshore_city)
+            similarity = calculate_similarity(city_norm, offshore_name)
             if similarity >= threshold:
-                result["value"] = offshore_city.title()
+                result["value"] = offshore_name.title()
                 result["score"] = similarity
                 result["is_suspicious"] = True
-                logger.debug(f"City '{city}' fuzzy matched offshore city: {offshore_city} (score={similarity:.2f})")
+                logger.debug(f"City '{city}' fuzzy matched offshore jurisdiction: {offshore_name} (score={similarity:.2f})")
                 return result
     
     return result

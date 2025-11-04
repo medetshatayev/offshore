@@ -1,6 +1,9 @@
 """
 SWIFT/BIC code handling and country extraction.
 Format: BANKCODE(4) + COUNTRYCODE(2) + LOCATIONCODE(2) + [BRANCHCODE(3)]
+
+All offshore country data loaded from data/offshore_countries.md as single source of truth.
+Supports extended country codes (ES-CN, US-WY, etc.) by extracting base 2-letter codes.
 """
 from pathlib import Path
 from typing import Any, Dict, Optional, Set
@@ -8,60 +11,6 @@ from typing import Any, Dict, Optional, Set
 from core.logger import setup_logger
 
 logger = setup_logger(__name__)
-
-# ISO 3166-1 alpha-2 country codes (subset for validation)
-VALID_COUNTRY_CODES = {
-    "AD", "AE", "AF", "AG", "AI", "AL", "AM", "AO", "AQ", "AR", "AS", "AT",
-    "AU", "AW", "AX", "AZ", "BA", "BB", "BD", "BE", "BF", "BG", "BH", "BI",
-    "BJ", "BL", "BM", "BN", "BO", "BQ", "BR", "BS", "BT", "BV", "BW", "BY",
-    "BZ", "CA", "CC", "CD", "CF", "CG", "CH", "CI", "CK", "CL", "CM", "CN",
-    "CO", "CR", "CU", "CV", "CW", "CX", "CY", "CZ", "DE", "DJ", "DK", "DM",
-    "DO", "DZ", "EC", "EE", "EG", "EH", "ER", "ES", "ET", "FI", "FJ", "FK",
-    "FM", "FO", "FR", "GA", "GB", "GD", "GE", "GF", "GG", "GH", "GI", "GL",
-    "GM", "GN", "GP", "GQ", "GR", "GS", "GT", "GU", "GW", "GY", "HK", "HM",
-    "HN", "HR", "HT", "HU", "ID", "IE", "IL", "IM", "IN", "IO", "IQ", "IR",
-    "IS", "IT", "JE", "JM", "JO", "JP", "KE", "KG", "KH", "KI", "KM", "KN",
-    "KP", "KR", "KW", "KY", "KZ", "LA", "LB", "LC", "LI", "LK", "LR", "LS",
-    "LT", "LU", "LV", "LY", "MA", "MC", "MD", "ME", "MF", "MG", "MH", "MK",
-    "ML", "MM", "MN", "MO", "MP", "MQ", "MR", "MS", "MT", "MU", "MV", "MW",
-    "MX", "MY", "MZ", "NA", "NC", "NE", "NF", "NG", "NI", "NL", "NO", "NP",
-    "NR", "NU", "NZ", "OM", "PA", "PE", "PF", "PG", "PH", "PK", "PL", "PM",
-    "PN", "PR", "PS", "PT", "PW", "PY", "QA", "RE", "RO", "RS", "RU", "RW",
-    "SA", "SB", "SC", "SD", "SE", "SG", "SH", "SI", "SJ", "SK", "SL", "SM",
-    "SN", "SO", "SR", "SS", "ST", "SV", "SX", "SY", "SZ", "TC", "TD", "TF",
-    "TG", "TH", "TJ", "TK", "TL", "TM", "TN", "TO", "TR", "TT", "TV", "TW",
-    "TZ", "UA", "UG", "UM", "US", "UY", "UZ", "VA", "VC", "VE", "VG", "VI",
-    "VN", "VU", "WF", "WS", "YE", "YT", "ZA", "ZM", "ZW"
-}
-
-# Mapping of ISO codes to country names (English)
-COUNTRY_CODE_TO_NAME = {
-    "AD": "Andorra", "AE": "United Arab Emirates", "AG": "Antigua and Barbuda",
-    "AI": "Anguilla", "AW": "Aruba", "BB": "Barbados", "BH": "Bahrain",
-    "BM": "Bermuda", "BN": "Brunei", "BQ": "Bonaire, Sint Eustatius and Saba",
-    "BS": "Bahamas", "BZ": "Belize", "CK": "Cook Islands", "CO": "Colombia",
-    "CR": "Costa Rica", "DJ": "Djibouti", "DM": "Dominica", "DO": "Dominican Republic",
-    "ES": "Spain", "FJ": "Fiji", "FR": "France", "GB": "United Kingdom",
-    "GD": "Grenada", "GF": "French Guiana", "GG": "Guernsey", "GI": "Gibraltar",
-    "GS": "South Georgia and the South Sandwich Islands", "GT": "Guatemala",
-    "GU": "Guam", "GY": "Guyana", "HK": "Hong Kong", "IM": "Isle of Man",
-    "IO": "British Indian Ocean Territory", "JE": "Jersey", "JM": "Jamaica",
-    "KM": "Comoros", "KN": "Saint Kitts and Nevis", "KY": "Cayman Islands",
-    "LB": "Lebanon", "LC": "Saint Lucia", "LK": "Sri Lanka", "LR": "Liberia",
-    "MA": "Morocco", "MC": "Monaco", "ME": "Montenegro", "MH": "Marshall Islands",
-    "MM": "Myanmar", "MO": "Macao", "MP": "Northern Mariana Islands",
-    "MR": "Mauritania", "MS": "Montserrat", "MT": "Malta", "MU": "Mauritius",
-    "MV": "Maldives", "MY": "Malaysia", "NG": "Nigeria", "NL": "Netherlands",
-    "NR": "Nauru", "NU": "Niue", "NZ": "New Zealand", "PA": "Panama",
-    "PF": "French Polynesia", "PH": "Philippines", "PR": "Puerto Rico",
-    "PT": "Portugal", "PW": "Palau", "SC": "Seychelles", "SM": "San Marino",
-    "SR": "Suriname", "SX": "Sint Maarten", "TC": "Turks and Caicos Islands",
-    "TF": "French Southern Territories", "TO": "Tonga", "TT": "Trinidad and Tobago",
-    "TZ": "Tanzania", "US": "United States", "VC": "Saint Vincent and the Grenadines",
-    "VG": "Virgin Islands (British)", "VI": "Virgin Islands (U.S.)",
-    "VU": "Vanuatu", "WS": "Samoa", "KZ": "Kazakhstan", "RU": "Russia"
-}
-
 
 def extract_country_from_swift(swift_code: Optional[str]) -> Dict[str, Optional[str]]:
     """
@@ -113,22 +62,38 @@ def extract_country_from_swift(swift_code: Optional[str]) -> Dict[str, Optional[
         logger.debug(f"Invalid SWIFT format - country code must be letters: {swift_code}")
         return result
     
-    # Validate country code exists in our list
-    if country_code not in VALID_COUNTRY_CODES:
-        logger.debug(f"Unknown country code in SWIFT: {swift_code} -> {country_code}")
-        # Still mark as potentially valid format, just unknown country
-        result["country_code"] = country_code
-        result["country_name"] = country_code  # Use code as name if unknown
-        result["is_valid_swift"] = True
-        return result
-    
+    # Accept any valid 2-letter country code
+    # For country name, use loaded offshore names if available, otherwise use code
     result["country_code"] = country_code
-    result["country_name"] = COUNTRY_CODE_TO_NAME.get(country_code, country_code)
+    result["country_name"] = OFFSHORE_COUNTRY_NAMES_EN.get(country_code, country_code)
     result["is_valid_swift"] = True
     
     logger.debug(f"Extracted from SWIFT {swift_code}: {country_code} -> {result['country_name']}")
     
     return result
+
+
+def extract_base_country_code(code: str) -> Optional[str]:
+    """
+    Extract base 2-letter country code from extended codes.
+    Examples: ES-CN → ES, US-WY → US, HK → HK
+    """
+    if not code:
+        return None
+    
+    code_clean = code.strip().upper()
+    
+    # Split on hyphen and take first part
+    if "-" in code_clean:
+        base_code = code_clean.split("-")[0]
+    else:
+        base_code = code_clean
+    
+    # Validate 2 letters, not Russian text
+    if len(base_code) == 2 and base_code.isalpha() and base_code not in ["КОД", "КО"]:
+        return base_code
+    
+    return None
 
 
 def is_valid_country_code(code: str) -> bool:
@@ -148,7 +113,7 @@ def is_valid_country_code(code: str) -> bool:
     )
 
 
-def parse_offshore_table_line(line: str) -> Optional[str]:
+def parse_offshore_table_line(line: str) -> Optional[tuple]:
     """
     Parse a single line from the offshore countries markdown table.
     
@@ -156,41 +121,50 @@ def parse_offshore_table_line(line: str) -> Optional[str]:
         line: Line from markdown file
     
     Returns:
-        Country code if valid, None otherwise
+        Tuple of (base_code, russian_name, english_name) if valid, None otherwise
     """
     # Skip separator lines and non-table lines
     if not line or "|" not in line or line.startswith("|:-"):
         return None
     
     # Split by pipe and extract columns
+    # Format: | RUSNAME | CODE | ENGNAME |
     parts = [p.strip() for p in line.split("|")]
     
-    # Need at least 4 parts for proper table format: | Name | Code | English |
+    # Need at least 4 parts for proper table format: | RUSNAME | CODE | ENGNAME |
     if len(parts) < 4:
         return None
     
-    # Third column (index 2) contains the country code
-    code = parts[2].strip()
+    # Extract columns
+    russian_name = parts[1].strip()
+    code_raw = parts[2].strip()
+    english_name = parts[3].strip()
     
-    if code and is_valid_country_code(code):
-        return code.upper()
+    # Extract base country code (handles extended codes like ES-CN)
+    base_code = extract_base_country_code(code_raw)
+    
+    if base_code and russian_name and english_name:
+        return (base_code, russian_name, english_name)
     
     return None
 
 
-def load_offshore_codes() -> Set[str]:
+def load_offshore_codes() -> tuple:
     """
-    Load offshore country codes from data file.
+    Load offshore country codes and names from data file.
     
     Returns:
-        Set of ISO 2-letter country codes
+        Tuple of (Set[str], Dict[str, str], Dict[str, str]):
+        - Set of base 2-letter country codes
+        - Dict mapping code to Russian name
+        - Dict mapping code to English name
     """
     data_file = Path(__file__).parent.parent / "data" / "offshore_countries.md"
     
     if not data_file.exists():
         logger.warning(f"Offshore countries file not found: {data_file}")
         logger.warning("System will operate without offshore jurisdiction list")
-        return set()
+        return (set(), {}, {})
     
     try:
         with open(data_file, "r", encoding="utf-8") as f:
@@ -198,31 +172,38 @@ def load_offshore_codes() -> Set[str]:
         
         if not lines:
             logger.warning("Offshore countries file is empty")
-            return set()
+            return (set(), {}, {})
         
-        # Parse each line and collect valid codes
-        offshore_codes = {
-            code for line in lines 
-            if (code := parse_offshore_table_line(line)) is not None
-        }
+        # Parse each line and collect valid codes and names
+        offshore_codes = set()
+        offshore_names_ru = {}
+        offshore_names_en = {}
+        
+        for line in lines:
+            parsed = parse_offshore_table_line(line)
+            if parsed is not None:
+                code, rus_name, eng_name = parsed
+                offshore_codes.add(code)
+                offshore_names_ru[code] = rus_name
+                offshore_names_en[code] = eng_name
         
         if offshore_codes:
-            logger.info(f"Loaded {len(offshore_codes)} offshore country codes")
+            logger.info(f"Loaded {len(offshore_codes)} offshore country codes with bilingual names")
         else:
             logger.warning("No offshore country codes loaded from file")
         
-        return offshore_codes
+        return (offshore_codes, offshore_names_ru, offshore_names_en)
     
     except PermissionError as e:
         logger.error(f"Permission denied reading offshore countries file: {e}")
-        return set()
+        return (set(), {}, {})
     except Exception as e:
         logger.error(f"Failed to load offshore codes: {e}", exc_info=True)
-        return set()
+        return (set(), {}, {})
 
 
-# Load offshore codes at module import
-OFFSHORE_COUNTRY_CODES = load_offshore_codes()
+# Load offshore data from markdown file - single source of truth
+OFFSHORE_COUNTRY_CODES, OFFSHORE_COUNTRY_NAMES_RU, OFFSHORE_COUNTRY_NAMES_EN = load_offshore_codes()
 
 
 def is_offshore_country(country_code: Optional[str]) -> bool:

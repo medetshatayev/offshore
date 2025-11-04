@@ -65,23 +65,22 @@ Any transaction involving these countries should be flagged as offshore:
 
 **ANALYSIS RULES:**
 
-1. **SWIFT Country Priority**: The country extracted from the SWIFT/BIC code is the most reliable indicator. If the SWIFT country code matches the offshore list, this is a strong signal.
+1. **Bank Address is Critical**: The bank address is the most reliable indicator of the actual physical location of the bank. When the address clearly shows a specific city and country (e.g., "BEIJING, CHINA" or "NEW YORK, USA"), this should be your primary reference point.
 
-2. **Simple Fuzzy Matching**: Use the provided fuzzy matching signals for:
-   - Country code (2-letter ISO code)
-   - Country name (full name)
-   - City name
-   
-   These signals are provided in the transaction data with match scores (0.0 to 1.0).
+2. **SWIFT Country Code**: The country extracted from the SWIFT/BIC code is a strong indicator. Cross-reference it with the offshore list and the bank address for consistency.
 
-3. **Classification Labels**:
-   - **OFFSHORE_YES**: Clear evidence of offshore jurisdiction involvement (SWIFT match, exact country code/name match)
-   - **OFFSHORE_SUSPECT**: Partial indicators or circumstantial evidence (fuzzy matches, suspicious city, but not definitive)
-   - **OFFSHORE_NO**: No offshore indicators found
+3. **City and Country Fields**: Use these in combination with the bank address to confirm the jurisdiction. If there's a mismatch between the SWIFT country and location data, prioritize the bank address details.
 
-4. **Conservative Approach**: When uncertain, use OFFSHORE_SUSPECT rather than making assumptions. Provide clear reasoning.
+4. **Special Cases - China**: Be aware that China (CN) is NOT an offshore jurisdiction. Macao (MO) and Hong Kong (HK) are separate jurisdictions with their own SWIFT codes. If the bank address shows a mainland Chinese city like Beijing, Shanghai, or Shenzhen, classify as NOT offshore even if there are name ambiguities.
 
-5. **Web Search Tool - WHEN TO USE**: You SHOULD use the `web_search` tool in these situations:
+5. **Classification Labels**:
+   - **OFFSHORE_YES**: Bank is clearly located in an offshore jurisdiction from the list (confirmed by SWIFT code and/or address)
+   - **OFFSHORE_SUSPECT**: Some indicators suggest possible offshore involvement but evidence is ambiguous or incomplete
+   - **OFFSHORE_NO**: Bank is clearly NOT in an offshore jurisdiction (confirmed by address and SWIFT code)
+
+6. **Conservative Approach**: When uncertain due to incomplete or contradictory data, use OFFSHORE_SUSPECT. Provide clear reasoning about what is known and what is ambiguous.
+
+7. **Web Search Tool - WHEN TO USE**: You SHOULD use the `web_search` tool in these situations:
    - **Ambiguous cases**: When signals are unclear or contradictory
    - **Unknown banks**: To verify the actual country of domicile for the bank
    - **Company verification**: To check if the counterparty company has offshore connections
@@ -94,7 +93,7 @@ Any transaction involving these countries should be flagged as offshore:
    
    **DO NOT include** "Нет источников" in your response - leave sources as empty array [] if not used.
 
-6. **Output Format**: You MUST return valid JSON that conforms to the schema provided. The response must include:
+8. **Output Format**: You MUST return valid JSON that conforms to the schema provided. The response must include:
    - transaction_id, direction
    - signals (swift country, matches)
    - classification (label and confidence 0.0-1.0)
@@ -145,72 +144,60 @@ Remember: It's better to search and be thorough than to miss potential offshore 
 def build_user_message(transaction_data: Dict[str, Any]) -> str:
     """
     Build user message with transaction details for LLM.
+    Sends only essential fields: counterparty (non-physical only), bank details,
+    location info, and payment details (outgoing only).
     
     Args:
         transaction_data: Normalized transaction dictionary
     
     Returns:
-        Formatted user message string
+        Formatted user message string with only specified fields
     """
-    # Extract key fields
-    txn_id = transaction_data.get("id", "N/A")
     direction = transaction_data.get("direction", "unknown")
-    currency = transaction_data.get("currency", "N/A")
-    swift = transaction_data.get("swift_code", "N/A")
-    country_res = transaction_data.get("country_residence", "N/A")
-    country_code = transaction_data.get("country_code", "N/A")
-    recipient_country = transaction_data.get("recipient_country", "N/A")
-    payer_country = transaction_data.get("payer_country", "N/A")
-    city = transaction_data.get("city", "N/A")
+    client_category = transaction_data.get("client_category", "")
     
-    # Extract signals if provided
-    signals = transaction_data.get("signals", {})
-    swift_country = signals.get("swift_country_code", "N/A")
-    swift_country_name = signals.get("swift_country_name", "N/A")
-    is_offshore_swift = signals.get("is_offshore_by_swift", False)
+    # Conditionally include counterparty (only for non-physical clients)
+    include_counterparty = (client_category != "Физ")
     
-    country_code_match = signals.get("country_code_match", {})
-    country_name_match = signals.get("country_name_match", {})
-    city_match = signals.get("city_match", {})
-    
-    # Build counterparty info
+    # Extract direction-specific fields
     if direction == "incoming":
-        counterparty = transaction_data.get("payer", "N/A")
-        bank = transaction_data.get("payer_bank", "N/A")
-        country_info = f"Payer Country: {payer_country}"
-    else:
-        counterparty = transaction_data.get("recipient", "N/A")
-        bank = transaction_data.get("recipient_bank", "N/A")
-        country_info = f"Recipient Country: {recipient_country}"
+        counterparty = transaction_data.get("payer", "")
+        bank = transaction_data.get("payer_bank", "")
+        swift = transaction_data.get("payer_bank_swift", "")
+        bank_address = transaction_data.get("payer_bank_address", "")
+        country = transaction_data.get("payer_country", "")
+    else:  # outgoing
+        counterparty = transaction_data.get("recipient", "")
+        bank = transaction_data.get("recipient_bank", "")
+        swift = transaction_data.get("recipient_bank_swift", "")
+        bank_address = transaction_data.get("recipient_bank_address", "")
+        country = transaction_data.get("recipient_country", "")
     
-    message = f"""**TRANSACTION TO ANALYZE:**
-
-Transaction ID: {txn_id}
-Direction: {direction}
-Currency: {currency}
-
-**COUNTERPARTY INFORMATION:**
-Counterparty: {counterparty}
-Bank: {bank}
-Bank SWIFT Code: {swift}
-City: {city}
-
-**COUNTRY INFORMATION:**
-Country of Residence: {country_res}
-Country Code: {country_code}
-{country_info}
-
-**LOCAL MATCHING SIGNALS:**
-SWIFT Extracted Country: {swift_country} ({swift_country_name})
-Is Offshore by SWIFT: {is_offshore_swift}
-
-Country Code Match: {country_code_match.get('value', 'None')} (score: {country_code_match.get('score', 'N/A')})
-Country Name Match: {country_name_match.get('value', 'None')} (score: {country_name_match.get('score', 'N/A')})
-City Match: {city_match.get('value', 'None')} (score: {city_match.get('score', 'N/A')})
-
-**YOUR TASK:**
-Based on the above information and the offshore jurisdictions list, determine the offshore risk level for this transaction.
-Return a JSON response following the exact schema provided.
-"""
+    # Extract common fields
+    city = transaction_data.get("city", "")
+    country_code = transaction_data.get("country_code", "")
     
-    return message
+    # Build message parts
+    message_parts = []
+    
+    # Add counterparty only for non-physical clients
+    if include_counterparty and counterparty:
+        label = "Плательщик" if direction == "incoming" else "Получатель"
+        message_parts.append(f"{label}: {counterparty}")
+    
+    # Add required fields
+    message_parts.extend([
+        f"SWIFT банка: {swift}",
+        f"Город: {city}",
+        f"Банк: {bank}",
+        f"Адрес банка: {bank_address}",
+        f"Код страны: {country_code}",
+        f"Страна: {country}"
+    ])
+    
+    # Add payment details for outgoing transactions only
+    if direction == "outgoing":
+        payment_details = transaction_data.get("payment_details", "")
+        message_parts.append(f"Детали платежа: {payment_details}")
+    
+    return "\n".join(message_parts)
