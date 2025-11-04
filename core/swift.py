@@ -6,11 +6,13 @@ All offshore country data loaded from data/offshore_countries.md as single sourc
 Supports extended country codes (ES-CN, US-WY, etc.) by extracting base 2-letter codes.
 """
 from pathlib import Path
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional, Set, Tuple
 
+from core.config import get_settings
 from core.logger import setup_logger
 
 logger = setup_logger(__name__)
+settings = get_settings()
 
 def extract_country_from_swift(swift_code: Optional[str]) -> Dict[str, Optional[str]]:
     """
@@ -149,7 +151,7 @@ def parse_offshore_table_line(line: str) -> Optional[tuple]:
     return None
 
 
-def load_offshore_codes() -> tuple:
+def load_offshore_codes() -> Tuple[Set[str], Dict[str, str], Dict[str, str]]:
     """
     Load offshore country codes and names from data file.
     
@@ -159,7 +161,7 @@ def load_offshore_codes() -> tuple:
         - Dict mapping code to Russian name
         - Dict mapping code to English name
     """
-    data_file = Path(__file__).parent.parent / "data" / "offshore_countries.md"
+    data_file = settings.offshore_countries_file
     
     if not data_file.exists():
         logger.warning(f"Offshore countries file not found: {data_file}")

@@ -2,17 +2,19 @@
 Excel exporters that preserve original columns and add Результат column.
 Handles both incoming and outgoing transaction outputs.
 """
-import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, List
 
 import pandas as pd
 
+from core.config import get_settings
+from core.exceptions import ExportError
 from core.logger import setup_logger
 from core.schema import OffshoreRiskResponse, LABEL_TRANSLATIONS
 
 logger = setup_logger(__name__)
+settings = get_settings()
 
 
 def format_signals_summary(signals: Any) -> str:
@@ -123,12 +125,12 @@ def export_to_excel(
         Path to created file
     
     Raises:
-        ValueError: If responses length doesn't match DataFrame
+        ExportError: If export fails or data validation fails
     """
     if len(original_df) != len(responses):
-        raise ValueError(
-            f"DataFrame length ({len(original_df)}) doesn't match "
-            f"responses length ({len(responses)})"
+        raise ExportError(
+            f"DataFrame length ({len(original_df)}) doesn't match responses length ({len(responses)})",
+            details={"df_length": len(original_df), "responses_length": len(responses)}
         )
     
     logger.info(f"Exporting {len(original_df)} transactions to {output_path}")
@@ -169,9 +171,14 @@ def export_to_excel(
         logger.info(f"Successfully exported to {output_path}")
         return output_path
     
+    except ExportError:
+        raise
     except Exception as e:
         logger.error(f"Failed to export Excel: {e}")
-        raise
+        raise ExportError(
+            f"Failed to export to Excel",
+            details={"output_path": output_path, "error": str(e)}
+        )
 
 
 def create_output_filename(direction: str, base_path: str = None) -> str:
@@ -180,13 +187,13 @@ def create_output_filename(direction: str, base_path: str = None) -> str:
     
     Args:
         direction: "incoming" or "outgoing"
-        base_path: Base directory path (defaults to TEMP_STORAGE_PATH or /tmp)
+        base_path: Base directory path (defaults to configured temp storage)
     
     Returns:
         Full output file path
     """
     if base_path is None:
-        base_path = os.getenv("TEMP_STORAGE_PATH", "/tmp/offshore_risk")
+        base_path = settings.temp_storage_path
     
     # Create directory if needed
     Path(base_path).mkdir(parents=True, exist_ok=True)

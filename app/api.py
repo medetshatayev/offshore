@@ -1,34 +1,23 @@
 """
 FastAPI routes for file upload and processing.
-Handles the main workflow: upload -> parse -> filter -> match -> LLM -> export.
+Clean API layer following separation of concerns principle.
 """
-import asyncio
-import os
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
-import pandas as pd
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from core.exporters import export_to_excel, create_output_filename
+from core.config import get_settings
+from core.exceptions import FileProcessingError
 from core.logger import setup_logger
-from core.matching import (
-    aggregate_matching_signals,
-    fuzzy_match_city,
-    fuzzy_match_country_code,
-    fuzzy_match_country_name,
-)
-from core.normalize import add_metadata, filter_by_threshold
-from core.parsing import parse_excel_file, validate_dataframe
-from core.schema import OffshoreRiskResponse
-from core.swift import extract_country_from_swift
-from llm.classify import classify_transaction, create_error_response
+from services.transaction_service import TransactionService
 
 logger = setup_logger(__name__)
+settings = get_settings()
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -41,15 +30,11 @@ app = FastAPI(
 templates_dir = Path(__file__).parent.parent / "templates"
 templates = Jinja2Templates(directory=str(templates_dir))
 
-# Temp storage path
-TEMP_STORAGE = os.getenv("TEMP_STORAGE_PATH", "/tmp/offshore_risk")
-Path(TEMP_STORAGE).mkdir(parents=True, exist_ok=True)
-
-# Concurrency limit
-MAX_CONCURRENT_LLM = int(os.getenv("MAX_CONCURRENT_LLM_CALLS", "5"))
-
 # In-memory job storage (use Redis/DB in production)
 jobs: Dict[str, Dict[str, Any]] = {}
+
+# Service instance
+transaction_service = TransactionService()
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -61,7 +46,11 @@ async def index(request: Request):
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "service": "offshore_risk"}
+    return {
+        "status": "healthy",
+        "service": "offshore_risk",
+        "version": "1.0.0"
+    }
 
 
 @app.get("/favicon.ico")
@@ -70,199 +59,31 @@ async def favicon():
     return Response(status_code=204)
 
 
-def build_classification_statistics(responses: List[OffshoreRiskResponse]) -> Dict[str, int]:
-    """
-    Build classification statistics from LLM responses.
-    
-    Args:
-        responses: List of classification responses
-    
-    Returns:
-        Dictionary with counts per classification label
-    """
-    classification_counts = {}
-    for resp in responses:
-        label = resp.classification.label
-        classification_counts[label] = classification_counts.get(label, 0) + 1
-    return classification_counts
-
-
-def extract_transaction_signals(row: pd.Series, direction: str) -> dict:
-    """
-    Extract matching signals for a single transaction.
-    
-    Args:
-        row: Transaction row from DataFrame
-        direction: Transaction direction ("incoming" or "outgoing")
-    
-    Returns:
-        Transaction dictionary with normalized data and signals
-    """
-    # Normalize transaction
-    from core.normalize import normalize_transaction
-    txn = normalize_transaction(row, direction)
-    
-    # Extract SWIFT country
-    swift_country = extract_country_from_swift(txn.get("swift_code"))
-    
-    # Fuzzy matching
-    country_code_match = fuzzy_match_country_code(txn.get("country_code"))
-    country_name_to_match = txn.get("payer_country") if direction == "incoming" else txn.get("recipient_country")
-    country_name_match = fuzzy_match_country_name(country_name_to_match)
-    city_match = fuzzy_match_city(txn.get("city"))
-    
-    # Aggregate signals
-    signals = aggregate_matching_signals(
-        swift_country,
-        country_code_match,
-        country_name_match,
-        city_match
-    )
-    
-    txn["signals"] = signals
-    return txn
-
-
-async def process_transaction_batch(
-    transactions: List[dict],
-    semaphore: asyncio.Semaphore
-) -> List[dict]:
-    """
-    Process a batch of transactions with concurrency control.
-    
-    Args:
-        transactions: List of normalized transaction dictionaries
-        semaphore: Asyncio semaphore for concurrency control
-    
-    Returns:
-        List of classification responses
-    """
-    total = len(transactions)
-    completed = [0]  # Use list to allow modification in nested function
-    
-    async def process_single(txn, idx):
-        async with semaphore:
-            # Run LLM classification in thread pool (since it's synchronous)
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(None, classify_transaction, txn)
-            completed[0] += 1
-            # Log progress every 10 transactions
-            if completed[0] % 10 == 0 or completed[0] == total:
-                logger.info(f"Progress: {completed[0]}/{total} transactions processed")
-            return result
-    
-    tasks = [process_single(txn, i) for i, txn in enumerate(transactions)]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    # Convert exceptions to error responses
-    processed_results = []
-    for i, result in enumerate(results):
-        if isinstance(result, Exception):
-            logger.error(f"Transaction {i} failed: {result}")
-            processed_results.append(
-                create_error_response(transactions[i], str(result))
-            )
-        else:
-            processed_results.append(result)
-    
-    return processed_results
-
-
-async def process_file(file_path: str, direction: str) -> dict:
-    """
-    Process a single Excel file through the full pipeline.
-    
-    Args:
-        file_path: Path to Excel file
-        direction: "incoming" or "outgoing"
-    
-    Returns:
-        Dictionary with output_path and statistics
-    """
-    logger.info(f"Processing {direction} file: {file_path}")
-    
-    # 1. Parse Excel
-    df = parse_excel_file(file_path, direction)
-    stats = validate_dataframe(df, direction)
-    logger.info(f"Parsed {len(df)} transactions")
-    
-    # 2. Filter by threshold
-    df_filtered = filter_by_threshold(df)
-    logger.info(f"After filtering: {len(df_filtered)} transactions")
-    
-    if len(df_filtered) == 0:
-        logger.warning("No transactions meet the threshold criteria")
-        result = {
-            "output_path": None,
-            "stats": {**stats, "filtered_count": 0, "processed_count": 0},
-            "error": "No transactions meet the 5,000,000 KZT threshold"
-        }
-        logger.info(f"Returning result: {result}")
-        return result
-    
-    # 3. Add metadata
-    df_filtered = add_metadata(df_filtered, direction)
-    
-    # 4. Process each transaction: normalize -> extract signals -> classify
-    transactions_with_signals = [
-        extract_transaction_signals(row, direction)
-        for idx, row in df_filtered.iterrows()
-    ]
-    
-    logger.info(f"Prepared {len(transactions_with_signals)} transactions with signals")
-    
-    # 5. Classify with LLM (with concurrency control)
-    logger.info("Starting LLM classification (this may take a while)...")
-    
-    # Create semaphore for concurrency control
-    semaphore = asyncio.Semaphore(MAX_CONCURRENT_LLM)
-    
-    # Run async processing with progress logging
-    total = len(transactions_with_signals)
-    logger.info(f"Starting LLM classification for {total} transactions in {direction} direction...")
-    
-    responses = await process_transaction_batch(transactions_with_signals, semaphore)
-    
-    logger.info(f"Completed LLM classification for {len(responses)}/{total} transactions in {direction} direction")
-    
-    # 6. Export to Excel
-    sheet_name = "Входящие операции" if direction == "incoming" else "Исходящие операции"
-    output_path = create_output_filename(direction, TEMP_STORAGE)
-    
-    export_to_excel(df_filtered, responses, output_path, sheet_name)
-    
-    # Build statistics
-    classification_counts = build_classification_statistics(responses)
-    
-    return {
-        "output_path": output_path,
-        "stats": {
-            **stats,
-            "filtered_count": len(df_filtered),
-            "processed_count": len(responses),
-            "classifications": classification_counts
-        }
-    }
-
-
 async def process_files_background(
     job_id: str,
     incoming_path: Path,
     outgoing_path: Path
-):
-    """Background task to process files."""
+) -> None:
+    """
+    Background task to process files.
+    
+    Args:
+        job_id: Unique job identifier
+        incoming_path: Path to incoming transactions file
+        outgoing_path: Path to outgoing transactions file
+    """
     try:
         jobs[job_id]["status"] = "processing"
         jobs[job_id]["message"] = "Processing incoming transactions..."
         
         # Process incoming file
-        incoming_result = await process_file(str(incoming_path), "incoming")
+        incoming_result = await transaction_service.process_file(str(incoming_path), "incoming")
         jobs[job_id]["incoming_result"] = incoming_result
         
         jobs[job_id]["message"] = "Processing outgoing transactions..."
         
         # Process outgoing file
-        outgoing_result = await process_file(str(outgoing_path), "outgoing")
+        outgoing_result = await transaction_service.process_file(str(outgoing_path), "outgoing")
         jobs[job_id]["outgoing_result"] = outgoing_result
         
         # Build final response
@@ -281,8 +102,15 @@ async def process_files_background(
         
         logger.info(f"Job {job_id} completed successfully")
         
+    except FileProcessingError as e:
+        logger.error(f"Job {job_id} failed with processing error: {e}", exc_info=True)
+        jobs[job_id]["status"] = "failed"
+        jobs[job_id]["message"] = f"Processing failed: {e.message}"
+        jobs[job_id]["error"] = e.message
+        jobs[job_id]["error_details"] = e.details
+    
     except Exception as e:
-        logger.error(f"Job {job_id} failed: {e}", exc_info=True)
+        logger.error(f"Job {job_id} failed with unexpected error: {e}", exc_info=True)
         jobs[job_id]["status"] = "failed"
         jobs[job_id]["message"] = f"Processing failed: {str(e)}"
         jobs[job_id]["error"] = str(e)
@@ -298,6 +126,23 @@ async def process_files_background(
                 logger.warning(f"Failed to cleanup {path}: {cleanup_error}")
 
 
+def validate_file_extension(filename: str) -> None:
+    """
+    Validate file has correct extension.
+    
+    Args:
+        filename: Name of file to validate
+    
+    Raises:
+        HTTPException: If file extension is invalid
+    """
+    if not filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type: {filename}. Only .xlsx and .xls are supported."
+        )
+
+
 @app.post("/process")
 async def process_files(
     background_tasks: BackgroundTasks,
@@ -306,7 +151,12 @@ async def process_files(
 ):
     """
     Accept files and start background processing.
-    Returns immediately with job ID.
+    Returns immediately with job ID for status polling.
+    
+    Args:
+        background_tasks: FastAPI background tasks
+        incoming_file: Incoming transactions Excel file
+        outgoing_file: Outgoing transactions Excel file
     
     Returns:
         202 Accepted with job_id for status polling
@@ -317,19 +167,15 @@ async def process_files(
     )
     
     # Validate file extensions
-    for file in [incoming_file, outgoing_file]:
-        if not file.filename.endswith(('.xlsx', '.xls')):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid file type: {file.filename}. Only .xlsx and .xls are supported."
-            )
+    validate_file_extension(incoming_file.filename)
+    validate_file_extension(outgoing_file.filename)
     
     # Generate job ID
     job_id = str(uuid.uuid4())
     
     # Save uploaded files temporarily
-    incoming_path = Path(TEMP_STORAGE) / f"{job_id}_incoming_{incoming_file.filename}"
-    outgoing_path = Path(TEMP_STORAGE) / f"{job_id}_outgoing_{outgoing_file.filename}"
+    incoming_path = Path(settings.temp_storage_path) / f"{job_id}_incoming_{incoming_file.filename}"
+    outgoing_path = Path(settings.temp_storage_path) / f"{job_id}_outgoing_{outgoing_file.filename}"
     
     try:
         # Save incoming file
@@ -374,7 +220,10 @@ async def process_files(
         for path in [incoming_path, outgoing_path]:
             if path.exists():
                 path.unlink()
-        raise HTTPException(status_code=500, detail=f"Failed to start processing: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to start processing: {str(e)}"
+        )
 
 
 @app.get("/status/{job_id}")
@@ -406,8 +255,10 @@ async def get_job_status(job_id: str):
         response["result"] = job["result"]
     
     # Add error if failed
-    if job["status"] == "failed" and "error" in job:
-        response["error"] = job["error"]
+    if job["status"] == "failed":
+        response["error"] = job.get("error")
+        if "error_details" in job:
+            response["error_details"] = job["error_details"]
     
     return response
 
@@ -431,12 +282,12 @@ async def download_file(filename: str):
     if not filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Invalid file type")
     
-    file_path = Path(TEMP_STORAGE) / filename
+    file_path = Path(settings.temp_storage_path) / filename
     
     # Ensure the resolved path is within TEMP_STORAGE
     try:
         file_path = file_path.resolve()
-        temp_storage_resolved = Path(TEMP_STORAGE).resolve()
+        temp_storage_resolved = Path(settings.temp_storage_path).resolve()
         if not str(file_path).startswith(str(temp_storage_resolved)):
             raise HTTPException(status_code=400, detail="Invalid file path")
     except Exception as e:
@@ -455,4 +306,4 @@ async def download_file(filename: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=settings.host, port=settings.port)

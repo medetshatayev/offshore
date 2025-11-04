@@ -2,10 +2,11 @@
 Transaction classification using LLM with structured output.
 Handles per-transaction LLM calls with error handling.
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from pydantic import ValidationError
 
+from core.exceptions import LLMError
 from core.logger import setup_logger
 from core.schema import OffshoreRiskResponse
 from llm.client import get_client, create_response_schema
@@ -71,12 +72,20 @@ def classify_transaction(
             error_msg=f"Validation error: {str(e)}"
         )
     
+    except LLMError as e:
+        logger.error(f"LLM error for transaction {txn_id}: {e}")
+        # Return error response with details
+        return create_error_response(
+            transaction_data,
+            error_msg=f"LLM error: {e.message}"
+        )
+    
     except Exception as e:
         logger.error(f"LLM classification failed for transaction {txn_id}: {e}")
         # Return error response
         return create_error_response(
             transaction_data,
-            error_msg=f"LLM error: {str(e)}"
+            error_msg=f"Unexpected error: {str(e)}"
         )
 
 

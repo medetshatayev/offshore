@@ -5,18 +5,16 @@ Uses substring and Levenshtein similarity for short tokens.
 All offshore data loaded from data/offshore_countries.md (single source of truth).
 Supports both Russian and English names for country/city matching.
 """
-import os
 from typing import Any, Dict, Optional
 
 import Levenshtein
 
+from core.config import get_settings
 from core.logger import setup_logger
 from core.swift import OFFSHORE_COUNTRY_CODES, OFFSHORE_COUNTRY_NAMES_RU, OFFSHORE_COUNTRY_NAMES_EN
 
 logger = setup_logger(__name__)
-
-# Fuzzy match threshold from env or default
-FUZZY_THRESHOLD = float(os.getenv("FUZZY_MATCH_THRESHOLD", "0.80"))
+settings = get_settings()
 
 
 def normalize_string(text: Optional[str]) -> str:
@@ -66,7 +64,7 @@ def calculate_similarity(s1: str, s2: str) -> float:
 
 def fuzzy_match_country_code(
     code: Optional[str],
-    threshold: float = FUZZY_THRESHOLD
+    threshold: Optional[float] = None
 ) -> Dict[str, Any]:
     """
     Check if country code matches offshore list.
@@ -78,6 +76,8 @@ def fuzzy_match_country_code(
     Returns:
         Match result with value and score
     """
+    threshold = threshold or settings.fuzzy_match_threshold
+    
     result = {
         "value": None,
         "score": None,
@@ -101,7 +101,7 @@ def fuzzy_match_country_code(
 
 def fuzzy_match_country_name(
     name: Optional[str],
-    threshold: float = FUZZY_THRESHOLD
+    threshold: Optional[float] = None
 ) -> Dict[str, Any]:
     """
     Fuzzy match country name against offshore list.
@@ -113,6 +113,8 @@ def fuzzy_match_country_name(
     Returns:
         Match result with best match value and score
     """
+    threshold = threshold or settings.fuzzy_match_threshold
+    
     result = {
         "value": None,
         "score": None,
@@ -178,7 +180,7 @@ def fuzzy_match_country_name(
 
 def fuzzy_match_city(
     city: Optional[str],
-    threshold: float = FUZZY_THRESHOLD
+    threshold: Optional[float] = None
 ) -> Dict[str, Any]:
     """
     Simple city name matching.
@@ -192,6 +194,8 @@ def fuzzy_match_city(
     Returns:
         Match result
     """
+    threshold = threshold or settings.fuzzy_match_threshold
+    
     result = {
         "value": None,
         "score": None,

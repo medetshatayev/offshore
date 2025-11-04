@@ -3,21 +3,17 @@ OpenAI client with web_search tool integration.
 Handles API calls with retries and structured output.
 """
 import json
-import os
 from typing import Any, Dict, Optional
 
 from openai import OpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
+from core.config import get_settings
+from core.exceptions import LLMError, ConfigurationError
 from core.logger import setup_logger
-from core.schema import OffshoreRiskResponse
 
 logger = setup_logger(__name__)
-
-# OpenAI configuration from environment
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
-OPENAI_TIMEOUT = int(os.getenv("OPENAI_TIMEOUT", "60"))
+settings = get_settings()
 
 
 class OpenAIClientWrapper:
@@ -25,14 +21,17 @@ class OpenAIClientWrapper:
     
     def __init__(self):
         """Initialize OpenAI client."""
-        if not OPENAI_API_KEY:
-            raise ValueError("OPENAI_API_KEY environment variable not set")
+        if not settings.openai_api_key:
+            raise ConfigurationError(
+                "OPENAI_API_KEY environment variable not set",
+                details={"required_key": "OPENAI_API_KEY"}
+            )
         
         self.client = OpenAI(
-            api_key=OPENAI_API_KEY,
-            timeout=OPENAI_TIMEOUT
+            api_key=settings.openai_api_key,
+            timeout=settings.openai_timeout
         )
-        logger.info(f"Initialized OpenAI client with model: {OPENAI_MODEL}")
+        logger.info(f"Initialized OpenAI client with model: {settings.openai_model}")
     
     @retry(
         stop=stop_after_attempt(3),
@@ -75,14 +74,14 @@ class OpenAIClientWrapper:
         
         # Build request parameters for Responses API
         request_params = {
-            "model": OPENAI_MODEL,
+            "model": settings.openai_model,
             "input": input_text,
             "tools": [{"type": "web_search"}],
             "tool_choice": "auto",
             "temperature": temperature,
         }
         
-        logger.debug(f"Calling OpenAI Responses API with model={OPENAI_MODEL}, temperature={temperature}")
+        logger.debug(f"Calling OpenAI Responses API with model={settings.openai_model}, temperature={temperature}")
         
         try:
             # Make API call using Responses API
@@ -143,11 +142,17 @@ class OpenAIClientWrapper:
             logger.error(f"Raw response: {content if 'content' in locals() else 'N/A'}")
             if 'content_stripped' in locals() and content_stripped != content:
                 logger.error(f"After stripping markdown: {content_stripped}")
-            raise ValueError(f"LLM returned invalid JSON: {e}")
+            raise LLMError(
+                f"LLM returned invalid JSON: {e}",
+                details={"raw_response": content if 'content' in locals() else None}
+            )
         
         except Exception as e:
             logger.error(f"OpenAI API call failed: {e}")
-            raise
+            raise LLMError(
+                f"OpenAI API call failed: {str(e)}",
+                details={"model": settings.openai_model, "error": str(e)}
+            )
 
 
 def create_response_schema() -> Dict[str, Any]:
