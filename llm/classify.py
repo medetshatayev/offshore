@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from core.logger import setup_logger
 from core.schema import OffshoreRiskResponse
 from llm.client import get_client, create_response_schema
-from llm.prompts import build_system_prompt, build_websearch_system_prompt, build_user_message
+from llm.prompts import build_system_prompt, build_user_message
 
 logger = setup_logger(__name__)
 
@@ -34,8 +34,6 @@ def classify_transaction(
     try:
         # Build prompts
         system_prompt = build_system_prompt()
-        system_prompt += "\n\n" + build_websearch_system_prompt()
-        
         user_message = build_user_message(transaction_data)
         
         # Get LLM client

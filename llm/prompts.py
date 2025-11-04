@@ -71,7 +71,15 @@ Any transaction involving these countries should be flagged as offshore:
 
 3. **City and Country Fields**: Use these in combination with the bank address to confirm the jurisdiction. If there's a mismatch between the SWIFT country and location data, prioritize the bank address details.
 
-4. **Special Cases - China**: Be aware that China (CN) is NOT an offshore jurisdiction. Macao (MO) and Hong Kong (HK) are separate jurisdictions with their own SWIFT codes. If the bank address shows a mainland Chinese city like Beijing, Shanghai, or Shenzhen, classify as NOT offshore even if there are name ambiguities.
+4. **Special Cases - Sub-jurisdictions**: Some offshore jurisdictions are special administrative regions or territories within larger countries. These have their own SWIFT country codes and must be distinguished from their parent countries:
+   - **China (CN)** is NOT offshore, but **Macao (MO)** IS offshore - they have separate SWIFT codes
+   - **Spain (ES)** is NOT offshore, but **Canary Islands (ES-CN)** IS offshore
+   - **USA (US)** is NOT offshore, but **Wyoming (US-WY)** IS offshore for certain purposes
+   - **Malaysia (MY)** is NOT offshore, but **Labuan (MY-15)** IS offshore
+   - **Portugal (PT)** is NOT offshore, but **Madeira (PT-30)** IS offshore
+   - **Morocco (MA)** is NOT offshore, but **Tangier (MA-TNG)** IS offshore
+   
+   **How to classify**: Check the bank address carefully. If it shows a mainland city (e.g., Beijing, Shanghai, Madrid, New York), classify as NOT offshore even if there are name ambiguities. The physical location in the address is the key indicator.
 
 5. **Classification Labels**:
    - **OFFSHORE_YES**: Bank is clearly located in an offshore jurisdiction from the list (confirmed by SWIFT code and/or address)
@@ -108,37 +116,6 @@ Any transaction involving these countries should be flagged as offshore:
 """
     
     return prompt
-
-
-def build_websearch_system_prompt() -> str:
-    """
-    Build system prompt specifically for web_search tool usage.
-    
-    Returns:
-        Web search guidance prompt
-    """
-    return """**WEB SEARCH GUIDANCE:**
-
-Use web_search proactively when:
-- You lack sufficient information to make a confident determination
-- Bank name, company name, or address suggests possible offshore ties
-- SWIFT country conflicts with other data
-- You need to verify if a company or bank has offshore operations
-- Transaction involves unfamiliar entities that might have offshore connections
-
-Search query examples:
-- "Wells Fargo WFBIUS6S bank headquarters location"
-- "[Company Name] offshore operations company registration"
-- "[Bank Name] [City] offshore banking services"
-- "SWIFT code [CODE] bank country verification"
-
-When searching:
-- Use specific, focused queries
-- Prioritize authoritative sources (SWIFT.com, central banks, regulators, official company sites)
-- Cite ALL URLs you reference in the `sources` array
-- Never include "Нет источников" - use empty array [] if no search performed
-
-Remember: It's better to search and be thorough than to miss potential offshore involvement."""
 
 
 def build_user_message(transaction_data: Dict[str, Any]) -> str:

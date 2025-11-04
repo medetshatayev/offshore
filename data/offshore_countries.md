@@ -62,7 +62,6 @@ This file contains the list of offshore jurisdictions for risk assessment.
 | СЕНТ-ВИНСЕНТ И ГРЕНАДИНЫ                            | VC    | SAINT VINCENT AND THE GRENADINES              |
 | СЕНТ-КИТС И НЕВИС                                   | KN    | SAINT KITTS AND NEVIS                         |
 | СЕНТ-ЛЮСИЯ                                          | LC    | SAINT LUCIA                                   |
-| СУРИНАМ                                             | SR    | SURINAME                                      |
 | ТОНГА                                               | TO    | TONGA                                         |
 | ТРИНИДАД И ТОБАГО                                   | TT    | TRINIDAD AND TOBAGO                           |
 | ФИДЖИ                                               | FJ    | FIJI                                          |
