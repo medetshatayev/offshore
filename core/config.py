@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(..., alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-4o", alias="OPENAI_MODEL")
     openai_timeout: int = Field(default=60, alias="OPENAI_TIMEOUT")
+    openai_gateway_url: str = Field(
+        default="https://dl-ai-dev-app01-uv01.fortebank.com/openai/fx/completions",
+        alias="OPENAI_GATEWAY_URL"
+    )
     
     # Processing
     amount_threshold_kzt: float = Field(default=5000000.0, alias="AMOUNT_THRESHOLD_KZT")
