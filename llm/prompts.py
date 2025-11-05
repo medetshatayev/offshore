@@ -71,13 +71,17 @@ Any transaction involving these countries should be flagged as offshore:
 
 3. **City and Country Fields**: Use these in combination with the bank address to confirm the jurisdiction. If there's a mismatch between the SWIFT country and location data, prioritize the bank address details.
 
-4. **Special Cases - Sub-jurisdictions**: Some offshore jurisdictions are special administrative regions or territories within larger countries. These have their own SWIFT country codes and must be distinguished from their parent countries:
-   - **China (CN)** is NOT offshore, but **Macao (MO)** IS offshore - they have separate SWIFT codes
-   - **Spain (ES)** is NOT offshore, but **Canary Islands (ES-CN)** IS offshore
+4. **Special Cases - Sub-jurisdictions and Islands**: Some offshore jurisdictions are special administrative regions or territories within larger countries. These have their own SWIFT country codes and must be distinguished from their parent countries:
+   - **China (CN)** is NOT offshore, but **Macao (MO)** and **Hong Kong (HK)** ARE offshore - they have separate SWIFT codes
+   - **Spain (ES)** is NOT offshore, but **Canary Islands (ES-CN)** IS offshore (includes: Tenerife, Gran Canaria, Fuerteventura, Lanzarote, etc.)
    - **USA (US)** is NOT offshore, but **Wyoming (US-WY)** IS offshore for certain purposes
    - **Malaysia (MY)** is NOT offshore, but **Labuan (MY-15)** IS offshore
    - **Portugal (PT)** is NOT offshore, but **Madeira (PT-30)** IS offshore
    - **Morocco (MA)** is NOT offshore, but **Tangier (MA-TNG)** IS offshore
+   - **Netherlands (NL)** for Antilles islands (Aruba, Bonaire, Curaçao, Saba, Sint Maarten, Sint Eustatius) IS offshore
+   - **United Kingdom (GB)** for certain islands like **Jersey, Guernsey, Isle of Man** ARE offshore with their own codes
+   
+   **Important**: Some islands or territories may officially belong to countries from the offshore list but are not explicitly mentioned. When encountering such cases, use web_search to verify the jurisdiction and determine if they should be classified as offshore.
    
    **How to classify**: Check the bank address carefully. If it shows a mainland city (e.g., Beijing, Shanghai, Madrid, New York), classify as NOT offshore even if there are name ambiguities. The physical location in the address is the key indicator.
 
