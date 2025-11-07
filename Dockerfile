@@ -11,8 +11,5 @@ RUN pip install --no-cache-dir -r requirements.txt --proxy="http://headproxy03.f
 # Create temp storage directory
 RUN mkdir -p /tmp/offshore_risk
 
-# Expose port
-EXPOSE 8000
-
 # Run the application
 CMD ["python", "main.py"]
