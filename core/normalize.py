@@ -3,7 +3,7 @@ Data normalization and metadata enrichment.
 Handles currency conversion, amount cleaning, and transaction metadata.
 """
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
 
@@ -66,6 +66,7 @@ def clean_amount_kzt(value: Any) -> Optional[float]:
 def filter_by_threshold(df: pd.DataFrame, threshold: Optional[float] = None) -> pd.DataFrame:
     """
     Filter transactions by KZT amount threshold.
+    Does NOT modify the original DataFrame with new columns.
     
     Args:
         df: DataFrame with 'Сумма в тенге' column
@@ -85,17 +86,25 @@ def filter_by_threshold(df: pd.DataFrame, threshold: Optional[float] = None) -> 
     
     threshold = threshold or settings.amount_threshold_kzt
     
-    # Create normalized amount column
-    df["amount_kzt_normalized"] = df["Сумма в тенге"].apply(clean_amount_kzt)
+    # Calculate normalized amounts temporarily
+    amounts = df["Сумма в тенге"].apply(clean_amount_kzt)
     
     # Count before filtering
     before_count = len(df)
     
-    # Filter by threshold
-    df_filtered = df[
-        df["amount_kzt_normalized"].notna() & 
-        (df["amount_kzt_normalized"] >= threshold)
-    ].copy()
+    # Filter by threshold using boolean indexing
+    # mask is True where amount is valid AND >= threshold
+    mask = amounts.notna() & (amounts >= threshold)
+    
+    df_filtered = df[mask].copy()
+    
+    # We can optionally attach the normalized amount if needed for LLM context,
+    # but the user requested removing it from output.
+    # We'll add it temporarily to the normalized dicts later, but not to the DF used for export.
+    # If we need it for `normalize_transaction` later, we can re-calculate or extract it there.
+    # Actually, `normalize_transaction` uses `amount_kzt_normalized`. 
+    # Let's pass the normalized amount differently or re-calculate it in `normalize_transaction`.
+    # Re-calculating is cheap.
     
     after_count = len(df_filtered)
     filtered_out = before_count - after_count
@@ -108,42 +117,8 @@ def filter_by_threshold(df: pd.DataFrame, threshold: Optional[float] = None) -> 
     return df_filtered
 
 
-def add_metadata(df: pd.DataFrame, direction: str) -> pd.DataFrame:
-    """
-    Add metadata columns to DataFrame.
-    
-    Args:
-        df: DataFrame to enrich
-        direction: Transaction direction ("incoming" or "outgoing")
-    
-    Returns:
-        DataFrame with added metadata columns
-    """
-    df = df.copy()
-    
-    # Add direction
-    df["direction"] = direction
-    
-    # Add processing timestamp
-    df["processed_at"] = datetime.utcnow().isoformat() + "Z"
-    
-    logger.debug(f"Added metadata: direction={direction}")
-    
-    return df
-
-
 def safe_get_value(row: pd.Series, key: str, default: Any = None) -> Any:
-    """
-    Safely get value from pandas Series, handling NaN and None.
-    
-    Args:
-        row: pandas Series
-        key: Column key
-        default: Default value if missing or NaN
-    
-    Returns:
-        Value or default
-    """
+    """Safely get value from pandas Series."""
     value = row.get(key, default)
     if pd.isna(value):
         return default
@@ -151,17 +126,7 @@ def safe_get_value(row: pd.Series, key: str, default: Any = None) -> Any:
 
 
 def safe_get_string(row: pd.Series, key: str, default: str = "") -> str:
-    """
-    Safely convert value to string, returning default if empty or None.
-    
-    Args:
-        row: pandas Series
-        key: Column key
-        default: Default string value
-    
-    Returns:
-        String value or default
-    """
+    """Safely convert value to string."""
     value = safe_get_value(row, key, default)
     if value is None or value == "":
         return default
@@ -171,6 +136,7 @@ def safe_get_string(row: pd.Series, key: str, default: str = "") -> str:
 def normalize_transaction(row: pd.Series, direction: str) -> Dict[str, Any]:
     """
     Normalize a single transaction row to a standard dictionary format.
+    Re-calculates normalized amount to avoid adding columns to the source DF.
     
     Args:
         row: pandas Series representing a transaction
@@ -179,11 +145,14 @@ def normalize_transaction(row: pd.Series, direction: str) -> Dict[str, Any]:
     Returns:
         Normalized transaction dictionary
     """
+    # Re-calculate amount for the dict (cheap operation)
+    amount_kzt = clean_amount_kzt(row.get("Сумма в тенге")) or 0.0
+    
     # Common fields
     normalized = {
         "id": safe_get_string(row, "№п/п", "unknown"),
         "direction": direction,
-        "amount_kzt": safe_get_value(row, "amount_kzt_normalized", 0.0),
+        "amount_kzt": amount_kzt,
         "amount": safe_get_value(row, "Сумма"),
         "currency": safe_get_string(row, "Валюта платежа"),
         "value_date": safe_get_string(row, "Дата валютирования"),
@@ -193,7 +162,6 @@ def normalize_transaction(row: pd.Series, direction: str) -> Dict[str, Any]:
         "city": safe_get_string(row, "Город"),
         "country_code": safe_get_string(row, "Код страны"),
         "status": safe_get_string(row, "Состояние"),
-        "processed_at": safe_get_string(row, "processed_at")
     }
     
     # Direction-specific fields

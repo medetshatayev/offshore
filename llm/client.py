@@ -123,13 +123,13 @@ class OpenAIClientWrapper:
             # Parse JSON response
             result = json.loads(content_stripped)
             
-            # Add extracted citations to sources if they're not already there
-            if 'sources' in result:
-                existing_sources = result.get('sources', [])
-                all_sources = list(set(existing_sources + citations))
-                result['sources'] = all_sources
-                if citations:
-                    logger.debug(f"Extracted {len(citations)} citations from web_search")
+            # Add extracted citations to root sources (assuming batch structure allows it or just log)
+            # For batch response, citations might belong to specific items. 
+            # Since we can't easily map citations to specific batch items without more complex logic,
+            # we'll log them. If the schema has a top-level 'sources', we'd add them there.
+            # But BatchOffshoreRiskResponse doesn't have top-level sources.
+            if citations:
+                logger.debug(f"Extracted {len(citations)} citations from web_search (batch mode)")
             
             logger.debug("Successfully parsed LLM JSON response")
             if hasattr(response, 'usage'):
@@ -157,8 +157,8 @@ class OpenAIClientWrapper:
 
 def create_response_schema() -> Dict[str, Any]:
     """
-    Create JSON schema for OffshoreRiskResponse.
-    This ensures the LLM returns properly structured data.
+    Create JSON schema for BatchOffshoreRiskResponse.
+    This ensures the LLM returns properly structured data for a batch of transactions.
     
     Returns:
         JSON schema dictionary
@@ -166,89 +166,60 @@ def create_response_schema() -> Dict[str, Any]:
     return {
         "type": "object",
         "properties": {
-            "transaction_id": {
-                "type": ["string", "null"],
-                "description": "Transaction identifier"
-            },
-            "direction": {
-                "type": "string",
-                "enum": ["incoming", "outgoing"],
-                "description": "Transaction direction"
-            },
-            "signals": {
-                "type": "object",
-                "properties": {
-                    "swift_country_code": {"type": ["string", "null"]},
-                    "swift_country_name": {"type": ["string", "null"]},
-                    "is_offshore_by_swift": {"type": ["boolean", "null"]},
-                    "country_name_match": {
-                        "type": "object",
-                        "properties": {
-                            "value": {"type": ["string", "null"]},
-                            "score": {"type": ["number", "null"]}
-                        },
-                        "required": ["value", "score"],
-                        "additionalProperties": False
-                    },
-                    "country_code_match": {
-                        "type": "object",
-                        "properties": {
-                            "value": {"type": ["string", "null"]},
-                            "score": {"type": ["number", "null"]}
-                        },
-                        "required": ["value", "score"],
-                        "additionalProperties": False
-                    },
-                    "city_match": {
-                        "type": "object",
-                        "properties": {
-                            "value": {"type": ["string", "null"]},
-                            "score": {"type": ["number", "null"]}
-                        },
-                        "required": ["value", "score"],
-                        "additionalProperties": False
-                    }
-                },
-                "required": [
-                    "swift_country_code", "swift_country_name", "is_offshore_by_swift",
-                    "country_name_match", "country_code_match", "city_match"
-                ],
-                "additionalProperties": False
-            },
-            "classification": {
-                "type": "object",
-                "properties": {
-                    "label": {
-                        "type": "string",
-                        "enum": ["OFFSHORE_YES", "OFFSHORE_SUSPECT", "OFFSHORE_NO"]
-                    },
-                    "confidence": {
-                        "type": "number",
-                        "minimum": 0.0,
-                        "maximum": 1.0
-                    }
-                },
-                "required": ["label", "confidence"],
-                "additionalProperties": False
-            },
-            "reasoning_short_ru": {
-                "type": "string",
-                "description": "Brief reasoning in Russian (1-2 sentences)"
-            },
-            "sources": {
+            "results": {
                 "type": "array",
-                "items": {"type": "string"},
-                "description": "URLs from web_search if used"
-            },
-            "llm_error": {
-                "type": ["string", "null"],
-                "description": "Error message if any"
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "transaction_id": {
+                            "type": ["string", "null"],
+                            "description": "Transaction identifier"
+                        },
+                        "direction": {
+                            "type": "string",
+                            "enum": ["incoming", "outgoing"],
+                            "description": "Transaction direction"
+                        },
+                        "classification": {
+                            "type": "object",
+                            "properties": {
+                                "label": {
+                                    "type": "string",
+                                    "enum": ["OFFSHORE_YES", "OFFSHORE_SUSPECT", "OFFSHORE_NO"]
+                                },
+                                "confidence": {
+                                    "type": "number",
+                                    "minimum": 0.0,
+                                    "maximum": 1.0
+                                }
+                            },
+                            "required": ["label", "confidence"],
+                            "additionalProperties": False
+                        },
+                        "reasoning_short_ru": {
+                            "type": "string",
+                            "description": "Brief reasoning in Russian (1-2 sentences)"
+                        },
+                        "sources": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "URLs from web_search if used"
+                        },
+                        "llm_error": {
+                            "type": ["string", "null"],
+                            "description": "Error message if any"
+                        }
+                    },
+                    "required": [
+                        "transaction_id", "direction",
+                        "classification", "reasoning_short_ru", "sources", "llm_error"
+                    ],
+                    "additionalProperties": False
+                },
+                "description": "List of classification results"
             }
         },
-        "required": [
-            "transaction_id", "direction", "signals",
-            "classification", "reasoning_short_ru", "sources", "llm_error"
-        ],
+        "required": ["results"],
         "additionalProperties": False
     }
 

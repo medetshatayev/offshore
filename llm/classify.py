@@ -1,41 +1,43 @@
 """
 Transaction classification using LLM with structured output.
-Handles per-transaction LLM calls with error handling.
+Handles batch transaction LLM calls with error handling.
 """
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from pydantic import ValidationError
 
 from core.exceptions import LLMError
 from core.logger import setup_logger
-from core.schema import OffshoreRiskResponse
+from core.schema import BatchOffshoreRiskResponse, OffshoreRiskResponse, Classification
 from llm.client import get_client, create_response_schema
 from llm.prompts import build_system_prompt, build_user_message
 
 logger = setup_logger(__name__)
 
 
-def classify_transaction(
-    transaction_data: Dict[str, Any],
+def classify_batch(
+    transactions: List[Dict[str, Any]],
     temperature: float = 0.1
-) -> OffshoreRiskResponse:
+) -> List[OffshoreRiskResponse]:
     """
-    Classify a single transaction for offshore risk using LLM.
+    Classify a batch of transactions for offshore risk using LLM.
     
     Args:
-        transaction_data: Normalized transaction dictionary with signals
+        transactions: List of normalized transaction dictionaries
         temperature: LLM temperature (0.0-1.0)
     
     Returns:
-        OffshoreRiskResponse with classification result
+        List of OffshoreRiskResponse objects
     """
-    txn_id = transaction_data.get("id", "unknown")
-    logger.info(f"Classifying transaction {txn_id}")
+    if not transactions:
+        return []
+        
+    logger.info(f"Classifying batch of {len(transactions)} transactions")
     
     try:
         # Build prompts
         system_prompt = build_system_prompt()
-        user_message = build_user_message(transaction_data)
+        user_message = build_user_message(transactions)
         
         # Get LLM client
         client = get_client()
@@ -51,42 +53,47 @@ def classify_transaction(
             temperature=temperature,
         )
         
-        # Re-insert amount for validation and export
-        llm_response["amount_kzt"] = transaction_data.get("amount_kzt", 0.0)
-        
         # Validate response with pydantic
-        result = OffshoreRiskResponse(**llm_response)
+        batch_result = BatchOffshoreRiskResponse(**llm_response)
         
-        logger.info(
-            f"Transaction {txn_id} classified: {result.classification.label} "
-            f"(confidence: {result.classification.confidence:.2f})"
-        )
+        # Map results back to original transactions to ensure order/completeness
+        # Create a map of id -> response
+        response_map = {res.transaction_id: res for res in batch_result.results if res.transaction_id}
         
-        return result
+        final_results = []
+        for txn in transactions:
+            txn_id = str(txn.get("id", "unknown"))
+            
+            if txn_id in response_map:
+                # Use the returned result
+                result = response_map[txn_id]
+                
+                # Set amount from local data since we removed it from LLM schema
+                result.amount_kzt = txn.get("amount_kzt", 0.0)
+                
+                final_results.append(result)
+            else:
+                logger.warning(f"Transaction {txn_id} missing from LLM response, marking as error")
+                # Create error response for missing item
+                final_results.append(create_error_response(
+                    txn,
+                    error_msg="LLM failed to return classification for this transaction"
+                ))
+        
+        logger.info(f"Batch processed: {len(final_results)} results")
+        return final_results
     
     except ValidationError as e:
-        logger.error(f"LLM response validation failed for transaction {txn_id}: {e}")
-        # Return error response
-        return create_error_response(
-            transaction_data,
-            error_msg=f"Validation error: {str(e)}"
-        )
+        logger.error(f"LLM batch response validation failed: {e}")
+        return [create_error_response(t, f"Validation error: {str(e)}") for t in transactions]
     
     except LLMError as e:
-        logger.error(f"LLM error for transaction {txn_id}: {e}")
-        # Return error response with details
-        return create_error_response(
-            transaction_data,
-            error_msg=f"LLM error: {e.message}"
-        )
+        logger.error(f"LLM error for batch: {e}")
+        return [create_error_response(t, f"LLM error: {e.message}") for t in transactions]
     
     except Exception as e:
-        logger.error(f"LLM classification failed for transaction {txn_id}: {e}")
-        # Return error response
-        return create_error_response(
-            transaction_data,
-            error_msg=f"Unexpected error: {str(e)}"
-        )
+        logger.error(f"Unexpected error in batch classification: {e}")
+        return [create_error_response(t, f"Unexpected error: {str(e)}") for t in transactions]
 
 
 def create_error_response(
@@ -103,32 +110,10 @@ def create_error_response(
     Returns:
         OffshoreRiskResponse with error
     """
-    from core.schema import TransactionSignals, Classification, MatchSignal
-    
-    # Extract basic signals
-    signals_data = transaction_data.get("signals", {})
-    
     return OffshoreRiskResponse(
         transaction_id=str(transaction_data.get("id", "")),
         direction=transaction_data.get("direction", "incoming"),
         amount_kzt=transaction_data.get("amount_kzt", 0.0),
-        signals=TransactionSignals(
-            swift_country_code=signals_data.get("swift_country_code"),
-            swift_country_name=signals_data.get("swift_country_name"),
-            is_offshore_by_swift=signals_data.get("is_offshore_by_swift"),
-            country_code_match=MatchSignal(
-                value=signals_data.get("country_code_match", {}).get("value"),
-                score=signals_data.get("country_code_match", {}).get("score")
-            ),
-            country_name_match=MatchSignal(
-                value=signals_data.get("country_name_match", {}).get("value"),
-                score=signals_data.get("country_name_match", {}).get("score")
-            ),
-            city_match=MatchSignal(
-                value=signals_data.get("city_match", {}).get("value"),
-                score=signals_data.get("city_match", {}).get("score")
-            )
-        ),
         classification=Classification(
             label="OFFSHORE_SUSPECT",
             confidence=0.0

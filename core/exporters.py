@@ -17,51 +17,12 @@ logger = setup_logger(__name__)
 settings = get_settings()
 
 
-def format_signals_summary(signals: Any) -> str:
-    """
-    Format signals into a readable summary string.
-    
-    Args:
-        signals: TransactionSignals object from response
-    
-    Returns:
-        Formatted string with all matching signals
-    """
-    signals_parts = []
-    
-    if signals.swift_country_code:
-        signals_parts.append(f"SWIFT: {signals.swift_country_code}")
-    
-    if signals.country_code_match.value:
-        score = signals.country_code_match.score
-        score_str = f"{score:.2f}" if score is not None else "N/A"
-        signals_parts.append(
-            f"Код страны: {signals.country_code_match.value} ({score_str})"
-        )
-    
-    if signals.country_name_match.value:
-        score = signals.country_name_match.score
-        score_str = f"{score:.2f}" if score is not None else "N/A"
-        signals_parts.append(
-            f"Страна: {signals.country_name_match.value} ({score_str})"
-        )
-    
-    if signals.city_match.value:
-        score = signals.city_match.score
-        score_str = f"{score:.2f}" if score is not None else "N/A"
-        signals_parts.append(
-            f"Город: {signals.city_match.value} ({score_str})"
-        )
-    
-    return "; ".join(signals_parts) if signals_parts else "Нет совпадений"
-
-
 def format_result_column(response: OffshoreRiskResponse) -> str:
     """
     Format the Результат column content from LLM response.
     
     Format: Итог: {label_ru} | Уверенность: {conf}% | Объяснение: {reasoning} | 
-            Совпадения: {signals} | Источники: {sources}
+            Источники: {sources}
     
     Args:
         response: LLM classification response
@@ -76,15 +37,11 @@ def format_result_column(response: OffshoreRiskResponse) -> str:
         # Format confidence as percentage (with bounds checking)
         confidence_pct = int(max(0, min(1, response.classification.confidence)) * 100)
         
-        # Build signals summary
-        signals_str = format_signals_summary(response.signals)
-        
         # Build final result string
         result = (
             f"Итог: {label_ru} | "
             f"Уверенность: {confidence_pct}% | "
-            f"Объяснение: {response.reasoning_short_ru} | "
-            f"Совпадения: {signals_str}"
+            f"Объяснение: {response.reasoning_short_ru}"
         )
         
         # Only add sources if they exist
@@ -114,6 +71,7 @@ def export_to_excel(
 ) -> str:
     """
     Export processed transactions to Excel with Результат column.
+    Removes internal processing columns before export.
     
     Args:
         original_df: Original DataFrame (filtered, with all original columns)

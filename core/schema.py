@@ -7,22 +7,6 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 
-class MatchSignal(BaseModel):
-    """Signal from fuzzy matching."""
-    value: Optional[str] = None
-    score: Optional[float] = Field(None, ge=0.0, le=1.0)
-
-
-class TransactionSignals(BaseModel):
-    """Aggregated matching signals for a transaction."""
-    swift_country_code: Optional[str] = None
-    swift_country_name: Optional[str] = None
-    is_offshore_by_swift: Optional[bool] = None
-    country_name_match: MatchSignal = Field(default_factory=MatchSignal)
-    country_code_match: MatchSignal = Field(default_factory=MatchSignal)
-    city_match: MatchSignal = Field(default_factory=MatchSignal)
-
-
 class Classification(BaseModel):
     """LLM classification result."""
     label: Literal["OFFSHORE_YES", "OFFSHORE_SUSPECT", "OFFSHORE_NO"]
@@ -36,8 +20,7 @@ class OffshoreRiskResponse(BaseModel):
     """
     transaction_id: Optional[str] = None
     direction: Literal["incoming", "outgoing"]
-    amount_kzt: float = Field(..., description="Transaction amount in KZT")
-    signals: TransactionSignals = Field(..., description="Matching signals from local analysis")
+    amount_kzt: Optional[float] = Field(None, description="Transaction amount in KZT (added locally)")
     classification: Classification = Field(..., description="Risk classification")
     reasoning_short_ru: str = Field(
         ...,
@@ -68,6 +51,11 @@ class OffshoreRiskResponse(BaseModel):
         return validated
 
 
+class BatchOffshoreRiskResponse(BaseModel):
+    """Wrapper for a list of risk responses."""
+    results: List[OffshoreRiskResponse] = Field(..., description="List of classification results")
+
+
 class TransactionInput(BaseModel):
     """Input transaction for LLM classification."""
     id: Optional[str] = None
@@ -83,8 +71,12 @@ class TransactionInput(BaseModel):
     payer: Optional[str] = None
     recipient: Optional[str] = None
     bank_name: Optional[str] = None
-    # Pre-computed signals
-    signals: Optional[dict] = None
+    payer_bank: Optional[str] = None
+    recipient_bank: Optional[str] = None
+    payer_bank_address: Optional[str] = None
+    recipient_bank_address: Optional[str] = None
+    client_category: Optional[str] = None
+    payment_details: Optional[str] = None
 
 
 # Label translations for output

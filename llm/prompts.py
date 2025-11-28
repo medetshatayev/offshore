@@ -1,184 +1,144 @@
 """
 System and user prompts for LLM offshore risk classification.
-Loads offshore jurisdictions table and builds prompts dynamically.
+Loads offshore jurisdictions from SQLite database and builds batch prompts.
 """
-from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
+from core.db import get_db
 from core.logger import setup_logger
 
 logger = setup_logger(__name__)
 
 
-def load_offshore_table() -> str:
+def load_offshore_list() -> str:
     """
-    Load offshore countries table from data file.
+    Load offshore countries list from SQLite database.
     
     Returns:
-        Formatted table as string for system prompt
+        Formatted list as string for system prompt
     """
     try:
-        data_file = Path(__file__).parent.parent / "data" / "offshore_countries.md"
+        db = get_db()
+        countries = db.get_all_countries()
         
-        if not data_file.exists():
-            error_msg = f"Offshore countries file not found: {data_file}"
-            logger.error(error_msg)
-            # Return a minimal table so the system doesn't completely fail
-            return "| Название | Код | English Name |\n|---|---|---|\n| ERROR | XX | Data file not found |"
+        if not countries:
+            logger.warning("No countries found in database")
+            return "No offshore countries loaded."
         
-        with open(data_file, "r", encoding="utf-8") as f:
-            content = f.read()
-        
-        # Extract just the table portion (lines with |)
-        lines = content.split("\n")
-        table_lines = [line for line in lines if "|" in line and line.strip()]
-        
-        if not table_lines:
-            logger.error("No table content found in offshore countries file")
-            return "| Название | Код | English Name |\n|---|---|---|\n| ERROR | XX | No data found |"
-        
-        logger.info(f"Loaded offshore table with {len(table_lines)} lines")
-        return "\n".join(table_lines)
+        logger.info(f"Loaded {len(countries)} offshore countries from DB")
+        return "\n".join([f"- {country}" for country in countries])
     
     except Exception as e:
-        logger.error(f"Failed to load offshore table: {e}", exc_info=True)
-        return "| Название | Код | English Name |\n|---|---|---|\n| ERROR | XX | Failed to load data |"
+        logger.error(f"Failed to load offshore list: {e}", exc_info=True)
+        return "Error loading offshore list."
 
 
 def build_system_prompt() -> str:
     """
-    Build the system prompt with embedded offshore jurisdictions table.
+    Build the system prompt with embedded offshore jurisdictions list.
     
     Returns:
         Complete system prompt string
     """
-    offshore_table = load_offshore_table()
+    offshore_list = load_offshore_list()
     
     prompt = f"""You are an expert financial compliance analyst for a Kazakhstani bank.
 
-Your task is to analyze banking transactions and determine if they involve offshore jurisdictions or present offshore-related risks.
+Your task is to analyze a BATCH of banking transactions and determine if they involve offshore jurisdictions or present offshore-related risks.
 
-**OFFSHORE JURISDICTIONS LIST:**
-Any transaction involving these countries should be flagged as offshore:
+**OFFSHORE JURISDICTIONS LIST (Government of Kazakhstan):**
+Any transaction involving these countries/territories should be flagged as offshore:
 
-{offshore_table}
+{offshore_list}
 
 **ANALYSIS RULES:**
 
-1. **Bank Address is Critical**: The bank address is the most reliable indicator of the actual physical location of the bank. When the address clearly shows a specific city and country (e.g., "BEIJING, CHINA" or "NEW YORK, USA"), this should be your primary reference point.
+1. **Database is Truth**: The list above is the ONLY source of truth. If a country/territory is in this list, it is offshore.
 
-2. **SWIFT Country Code**: The country extracted from the SWIFT/BIC code is a strong indicator. Cross-reference it with the offshore list and the bank address for consistency.
+2. **Bank Address & SWIFT**: 
+   - Check the bank address and SWIFT code country.
+   - If the bank is located in a listed jurisdiction, it is OFFSHORE_YES.
+   - Use the address as the primary location indicator.
 
-3. **City and Country Fields**: Use these in combination with the bank address to confirm the jurisdiction. If there's a mismatch between the SWIFT country and location data, prioritize the bank address details.
+3. **Special Cases**:
+   - Some territories (e.g., Wyoming US, Labuan Malaysia, Canary Islands Spain) are offshore even if their parent country is not.
+   - If the list contains specific regions (e.g. "Вайоминг (США)", "Малайзия (Лабуан)"), check for these specific locations.
 
-4. **Special Cases - Sub-jurisdictions and Islands**: Some offshore jurisdictions are special administrative regions or territories within larger countries. These have their own SWIFT country codes and must be distinguished from their parent countries:
-   - **China (CN)** is NOT offshore, but **Macao (MO)** and **Hong Kong (HK)** ARE offshore - they have separate SWIFT codes
-   - **Spain (ES)** is NOT offshore, but **Canary Islands (ES-CN)** IS offshore (includes: Tenerife, Gran Canaria, Fuerteventura, Lanzarote, etc.)
-   - **USA (US)** is NOT offshore, but **Wyoming (US-WY)** IS offshore for certain purposes
-   - **Malaysia (MY)** is NOT offshore, but **Labuan (MY-15)** IS offshore
-   - **Portugal (PT)** is NOT offshore, but **Madeira (PT-30)** IS offshore
-   - **Morocco (MA)** is NOT offshore, but **Tangier (MA-TNG)** IS offshore
-   - **Netherlands (NL)** for Antilles islands (Aruba, Bonaire, Curaçao, Saba, Sint Maarten, Sint Eustatius) IS offshore
-   - **United Kingdom (GB)** for certain islands like **Jersey, Guernsey, Isle of Man** ARE offshore with their own codes
-   
-   **Important**: Some islands or territories may officially belong to countries from the offshore list but are not explicitly mentioned. When encountering such cases, use web_search to verify the jurisdiction and determine if they should be classified as offshore.
-   
-   **How to classify**: Check the bank address carefully. If it shows a mainland city (e.g., Beijing, Shanghai, Madrid, New York), classify as NOT offshore even if there are name ambiguities. The physical location in the address is the key indicator.
+4. **Classification Labels**:
+   - **OFFSHORE_YES**: Bank/Entity is clearly located in a listed offshore jurisdiction.
+   - **OFFSHORE_SUSPECT**: Indicators suggest possible offshore involvement but evidence is ambiguous.
+   - **OFFSHORE_NO**: Bank/Entity is clearly NOT in a listed offshore jurisdiction.
 
-5. **Classification Labels**:
-   - **OFFSHORE_YES**: Bank is clearly located in an offshore jurisdiction from the list (confirmed by SWIFT code and/or address)
-   - **OFFSHORE_SUSPECT**: Some indicators suggest possible offshore involvement but evidence is ambiguous or incomplete
-   - **OFFSHORE_NO**: Bank is clearly NOT in an offshore jurisdiction (confirmed by address and SWIFT code)
+5. **Web Search**:
+   - Use `web_search` for ambiguous cases, unknown banks, or to verify specific locations.
+   - Cite sources in the `sources` array.
 
-6. **Conservative Approach**: When uncertain due to incomplete or contradictory data, use OFFSHORE_SUSPECT. Provide clear reasoning about what is known and what is ambiguous.
+6. **Output Format**:
+   - You must return a JSON object with a `results` array.
+   - Each item in `results` must correspond to one transaction in the input.
+   - Maintain the same `transaction_id` for each result.
 
-7. **Web Search Tool - WHEN TO USE**: You SHOULD use the `web_search` tool in these situations:
-   - **Ambiguous cases**: When signals are unclear or contradictory
-   - **Unknown banks**: To verify the actual country of domicile for the bank
-   - **Company verification**: To check if the counterparty company has offshore connections
-   - **Address verification**: To verify if the bank address or city suggests offshore activity
-   - **Suspicious patterns**: When company names, addresses, or bank names suggest possible offshore involvement but data is insufficient
-   - **SWIFT verification**: When SWIFT code indicates one country but other data suggests another
-   - **Edge cases**: Any situation where more context would help determine offshore risk
-   
-   If you use web_search, you MUST cite the sources in the `sources` array. Only include canonical, authoritative URLs.
-   
-   **DO NOT include** "Нет источников" in your response - leave sources as empty array [] if not used.
-
-8. **Output Format**: You MUST return valid JSON that conforms to the schema provided. The response must include:
-   - transaction_id, direction
-   - signals (swift country, matches)
-   - classification (label and confidence 0.0-1.0)
-   - reasoning_short_ru (1-2 sentences in Russian explaining the decision)
-   - sources (array of URLs if web_search was used, empty array [] otherwise - NEVER include text "Нет источников")
-
-**IMPORTANT**: 
-- Keep reasoning concise (1-2 sentences in Russian)
-- Confidence should reflect the strength of evidence (1.0 = definitive, 0.5 = uncertain)
-- Always provide valid JSON output
-- Use web_search proactively for ambiguous/suspicious cases to provide thorough analysis
+**IMPORTANT**:
+- Process ALL transactions in the batch.
+- Provide concise Russian reasoning (1-2 sentences) for each.
 """
-    
     return prompt
 
 
-def build_user_message(transaction_data: Dict[str, Any]) -> str:
+def build_user_message(transactions: List[Dict[str, Any]]) -> str:
     """
-    Build user message with transaction details for LLM.
-    Sends only essential fields: counterparty (non-physical only), bank details,
-    location info, and payment details (outgoing only).
+    Build user message with a batch of transactions.
     
     Args:
-        transaction_data: Normalized transaction dictionary
+        transactions: List of normalized transaction dictionaries
     
     Returns:
-        Formatted user message string with only specified fields
+        Formatted user message string
     """
-    direction = transaction_data.get("direction", "unknown")
-    client_category = transaction_data.get("client_category", "")
+    message_parts = ["Here is a batch of transactions to classify:\n"]
     
-    # Conditionally include counterparty (only for non-physical clients)
-    include_counterparty = (client_category != "Физ")
-    
-    # Extract direction-specific fields
-    if direction == "incoming":
-        counterparty = transaction_data.get("payer", "")
-        bank = transaction_data.get("payer_bank", "")
-        swift = transaction_data.get("payer_bank_swift", "")
-        bank_address = transaction_data.get("payer_bank_address", "")
-        country = transaction_data.get("payer_country", "")
-    else:  # outgoing
-        counterparty = transaction_data.get("recipient", "")
-        bank = transaction_data.get("recipient_bank", "")
-        swift = transaction_data.get("recipient_bank_swift", "")
-        bank_address = transaction_data.get("recipient_bank_address", "")
-        country = transaction_data.get("recipient_country", "")
-    
-    # Extract common fields
-    city = transaction_data.get("city", "")
-    country_code = transaction_data.get("country_code", "")
-    
-    # Build message parts
-    message_parts = []
-    
-    # Add counterparty only for non-physical clients
-    if include_counterparty and counterparty:
-        label = "Плательщик" if direction == "incoming" else "Получатель"
-        message_parts.append(f"{label}: {counterparty}")
-    
-    # Add required fields
-    message_parts.extend([
-        f"SWIFT банка: {swift}",
-        f"Город: {city}",
-        f"Банк: {bank}",
-        f"Адрес банка: {bank_address}",
-        f"Код страны: {country_code}",
-        f"Страна: {country}"
-    ])
-    
-    # Add payment details for outgoing transactions only
-    if direction == "outgoing":
-        payment_details = transaction_data.get("payment_details", "")
-        message_parts.append(f"Детали платежа: {payment_details}")
-    
+    for i, txn in enumerate(transactions, 1):
+        txn_id = txn.get("id", "unknown")
+        direction = txn.get("direction", "unknown")
+        client_category = txn.get("client_category", "")
+        
+        # Extract fields
+        if direction == "incoming":
+            counterparty = txn.get("payer", "")
+            bank = txn.get("payer_bank", "")
+            swift = txn.get("payer_bank_swift", "")
+            bank_address = txn.get("payer_bank_address", "")
+            country = txn.get("payer_country", "")
+        else:  # outgoing
+            counterparty = txn.get("recipient", "")
+            bank = txn.get("recipient_bank", "")
+            swift = txn.get("recipient_bank_swift", "")
+            bank_address = txn.get("recipient_bank_address", "")
+            country = txn.get("recipient_country", "")
+        
+        city = txn.get("city", "")
+        country_code = txn.get("country_code", "")
+        
+        # Build transaction block
+        txn_block = [f"Transaction #{i} (ID: {txn_id}, Direction: {direction}):"]
+        
+        if client_category != "Физ" and counterparty:
+            label = "Payer" if direction == "incoming" else "Recipient"
+            txn_block.append(f"- {label}: {counterparty}")
+        
+        txn_block.extend([
+            f"- Bank: {bank}",
+            f"- SWIFT: {swift}",
+            f"- Address: {bank_address}",
+            f"- City: {city}",
+            f"- Country: {country} ({country_code})"
+        ])
+        
+        if direction == "outgoing":
+            details = txn.get("payment_details", "")
+            txn_block.append(f"- Details: {details}")
+            
+        message_parts.append("\n".join(txn_block))
+        message_parts.append("")  # Empty line between transactions
+        
     return "\n".join(message_parts)

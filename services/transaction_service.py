@@ -11,17 +11,10 @@ from core.config import get_settings
 from core.exceptions import FileProcessingError, ValidationError
 from core.exporters import export_to_excel, create_output_filename
 from core.logger import setup_logger
-from core.matching import (
-    aggregate_matching_signals,
-    fuzzy_match_city,
-    fuzzy_match_country_code,
-    fuzzy_match_country_name,
-)
-from core.normalize import add_metadata, filter_by_threshold, normalize_transaction
+from core.normalize import filter_by_threshold, normalize_transaction
 from core.parsing import parse_excel_file, validate_dataframe
 from core.schema import OffshoreRiskResponse
-from core.swift import extract_country_from_swift
-from llm.classify import classify_transaction, create_error_response
+from llm.classify import classify_batch, create_error_response
 
 logger = setup_logger(__name__)
 
@@ -33,47 +26,13 @@ class TransactionService:
         """Initialize transaction service."""
         self.settings = get_settings()
     
-    def extract_transaction_signals(self, row: pd.Series, direction: str) -> Dict[str, Any]:
-        """
-        Extract matching signals for a single transaction.
-        
-        Args:
-            row: Transaction row from DataFrame
-            direction: Transaction direction ("incoming" or "outgoing")
-        
-        Returns:
-            Transaction dictionary with normalized data and signals
-        """
-        # Normalize transaction
-        txn = normalize_transaction(row, direction)
-        
-        # Extract SWIFT country
-        swift_country = extract_country_from_swift(txn.get("swift_code"))
-        
-        # Fuzzy matching
-        country_code_match = fuzzy_match_country_code(txn.get("country_code"))
-        country_name_to_match = txn.get("payer_country") if direction == "incoming" else txn.get("recipient_country")
-        country_name_match = fuzzy_match_country_name(country_name_to_match)
-        city_match = fuzzy_match_city(txn.get("city"))
-        
-        # Aggregate signals
-        signals = aggregate_matching_signals(
-            swift_country,
-            country_code_match,
-            country_name_match,
-            city_match
-        )
-        
-        txn["signals"] = signals
-        return txn
-    
     async def process_transaction_batch(
         self,
         transactions: List[Dict[str, Any]],
         semaphore: asyncio.Semaphore
     ) -> List[OffshoreRiskResponse]:
         """
-        Process a batch of transactions with concurrency control.
+        Process all transactions by chunking them into batches of 10.
         
         Args:
             transactions: List of normalized transaction dictionaries
@@ -83,34 +42,46 @@ class TransactionService:
             List of classification responses
         """
         total = len(transactions)
-        completed = [0]  # Use list to allow modification in nested function
+        batch_size = 10
         
-        async def process_single(txn: Dict[str, Any], idx: int) -> OffshoreRiskResponse:
+        # Create chunks
+        chunks = [transactions[i:i + batch_size] for i in range(0, total, batch_size)]
+        logger.info(f"Split {total} transactions into {len(chunks)} batches (size={batch_size})")
+        
+        all_results = []
+        completed_batches = [0]
+        
+        async def process_chunk(chunk: List[Dict[str, Any]]) -> List[OffshoreRiskResponse]:
             async with semaphore:
-                # Run LLM classification in thread pool (since it's synchronous)
                 loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(None, classify_transaction, txn)
-                completed[0] += 1
-                # Log progress every 10 transactions
-                if completed[0] % 10 == 0 or completed[0] == total:
-                    logger.info(f"Progress: {completed[0]}/{total} transactions processed")
-                return result
+                # Run sync LLM call in executor
+                results = await loop.run_in_executor(None, classify_batch, chunk)
+                
+                completed_batches[0] += 1
+                logger.info(f"Processed batch {completed_batches[0]}/{len(chunks)}")
+                
+                return results
         
-        tasks = [process_single(txn, i) for i, txn in enumerate(transactions)]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Process chunks concurrently (limited by semaphore)
+        tasks = [process_chunk(chunk) for chunk in chunks]
+        chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        # Convert exceptions to error responses
-        processed_results = []
-        for i, result in enumerate(results):
+        # Flatten results and handle errors
+        for i, result in enumerate(chunk_results):
             if isinstance(result, Exception):
-                logger.error(f"Transaction {i} failed: {result}")
-                processed_results.append(
-                    create_error_response(transactions[i], str(result))
-                )
+                logger.error(f"Batch {i} failed completely: {result}")
+                # Create error responses for this chunk's transactions
+                chunk_txns = chunks[i]
+                all_results.extend([
+                    create_error_response(txn, f"Batch processing failed: {str(result)}")
+                    for txn in chunk_txns
+                ])
+            elif isinstance(result, list):
+                all_results.extend(result)
             else:
-                processed_results.append(result)
+                logger.error(f"Unexpected result type for batch {i}: {type(result)}")
         
-        return processed_results
+        return all_results
     
     def build_classification_statistics(self, responses: List[OffshoreRiskResponse]) -> Dict[str, int]:
         """
@@ -150,7 +121,7 @@ class TransactionService:
             stats = validate_dataframe(df, direction)
             logger.info(f"Parsed {len(df)} transactions")
             
-            # 2. Filter by threshold
+            # 2. Filter by threshold (now returns df without extra columns)
             df_filtered = filter_by_threshold(df)
             logger.info(f"After filtering: {len(df_filtered)} transactions")
             
@@ -162,35 +133,29 @@ class TransactionService:
                     "error": f"No transactions meet the {self.settings.amount_threshold_kzt:,.0f} KZT threshold"
                 }
             
-            # 3. Add metadata
-            df_filtered = add_metadata(df_filtered, direction)
+            # 3. Prepare transactions (normalize on the fly)
+            transactions = []
+            for idx, row in df_filtered.iterrows():
+                # normalize_transaction now re-calculates amounts cleanly
+                txn = normalize_transaction(row, direction)
+                transactions.append(txn)
             
-            # 4. Process each transaction: normalize -> extract signals
-            transactions_with_signals = [
-                self.extract_transaction_signals(row, direction)
-                for idx, row in df_filtered.iterrows()
-            ]
+            logger.info(f"Prepared {len(transactions)} transactions for batch processing")
             
-            logger.info(f"Prepared {len(transactions_with_signals)} transactions with signals")
+            # 4. Classify with LLM (batch processing)
+            logger.info("Starting LLM batch classification...")
             
-            # 5. Classify with LLM (with concurrency control)
-            logger.info("Starting LLM classification (this may take a while)...")
-            
-            # Create semaphore for concurrency control
             semaphore = asyncio.Semaphore(self.settings.max_concurrent_llm_calls)
             
-            # Run async processing with progress logging
-            total = len(transactions_with_signals)
-            logger.info(f"Starting LLM classification for {total} transactions in {direction} direction...")
+            responses = await self.process_transaction_batch(transactions, semaphore)
             
-            responses = await self.process_transaction_batch(transactions_with_signals, semaphore)
+            logger.info(f"Completed LLM classification for {len(responses)}/{len(transactions)} transactions")
             
-            logger.info(f"Completed LLM classification for {len(responses)}/{total} transactions in {direction} direction")
-            
-            # 6. Export to Excel
+            # 5. Export to Excel
             sheet_name = "Входящие операции" if direction == "incoming" else "Исходящие операции"
             output_path = create_output_filename(direction, self.settings.temp_storage_path)
             
+            # export_to_excel now receives clean df without internal columns
             export_to_excel(df_filtered, responses, output_path, sheet_name)
             
             # Build statistics
