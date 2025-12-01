@@ -1,37 +1,42 @@
 """
-OpenAI client with web_search tool integration.
+OpenAI client using direct REST API calls to internal gateway.
 Handles API calls with retries and structured output.
 """
 import json
+import urllib3
 from typing import Any, Dict, Optional
+import requests
 
-from openai import OpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from core.config import get_settings
 from core.exceptions import LLMError, ConfigurationError
 from core.logger import setup_logger
 
+# Disable SSL warnings for internal gateway
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 logger = setup_logger(__name__)
 settings = get_settings()
 
 
 class OpenAIClientWrapper:
-    """Wrapper for OpenAI client with retry logic."""
+    """Wrapper for OpenAI REST API with retry logic."""
     
     def __init__(self):
-        """Initialize OpenAI client."""
+        """Initialize REST API client."""
         if not settings.openai_api_key:
             raise ConfigurationError(
                 "OPENAI_API_KEY environment variable not set",
                 details={"required_key": "OPENAI_API_KEY"}
             )
         
-        self.client = OpenAI(
-            api_key=settings.openai_api_key,
-            timeout=settings.openai_timeout
-        )
-        logger.info(f"Initialized OpenAI client with model: {settings.openai_model}")
+        self.gateway_url = settings.openai_gateway_url
+        self.api_key = settings.openai_api_key
+        self.model = settings.openai_model
+        self.timeout = settings.openai_timeout
+        
+        logger.info(f"Initialized OpenAI REST client with model: {self.model}, gateway: {self.gateway_url}")
     
     @retry(
         stop=stop_after_attempt(3),
@@ -47,7 +52,7 @@ class OpenAIClientWrapper:
         temperature: float = 0.1,
     ) -> Dict[str, Any]:
         """
-        Call OpenAI Responses API with structured output and web_search.
+        Call OpenAI Gateway completions API with structured output.
         
         Args:
             system_prompt: System instruction
@@ -59,7 +64,7 @@ class OpenAIClientWrapper:
             Parsed JSON response
         
         Raises:
-            Exception: If API call fails after retries
+            LLMError: If API call fails after retries
         """
         # Enhance system prompt with schema instructions
         system_prompt_with_schema = (
@@ -69,44 +74,69 @@ class OpenAIClientWrapper:
             "Respond ONLY with valid JSON, no additional text before or after."
         )
         
-        # Build input combining system and user messages
-        input_text = f"System: {system_prompt_with_schema}\n\nUser: {user_message}"
+        # Build combined content (system + user message)
+        content = f"System: {system_prompt_with_schema}\n\nUser: {user_message}"
         
-        # Build request parameters for Responses API
-        request_params = {
-            "model": settings.openai_model,
-            "input": input_text,
+        # Build request payload for gateway
+        payload = {
+            "Model": self.model,
+            "Content": content,
+            "Temperature": temperature,
+            "MaxTokens": 9000,
             "tools": [{"type": "web_search"}],
-            "tool_choice": "auto",
-            "temperature": temperature,
+            "tool_choice": "auto"
         }
         
-        logger.debug(f"Calling OpenAI Responses API with model={settings.openai_model}, temperature={temperature}")
+        # Build headers
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}"
+        }
+        
+        logger.debug(f"Calling OpenAI Gateway with model={self.model}, temperature={temperature}")
         
         try:
-            # Make API call using Responses API
-            response = self.client.responses.create(**request_params)
+            # Make POST request to gateway
+            response = requests.post(
+                self.gateway_url,
+                headers=headers,
+                data=json.dumps(payload),
+                verify=False,  # Disable SSL verification for internal gateway
+                timeout=self.timeout
+            )
             
-            # Extract response content and citations
-            content = None
-            citations = []
+            # Log status and raw response for debugging
+            logger.debug(f"Gateway response status: {response.status_code}")
             
-            for item in response.output:
-                if item.type == 'message':
-                    for content_item in item.content:
-                        if content_item.type == 'output_text':
-                            content = content_item.text
-                            # Extract URL citations from annotations
-                            if hasattr(content_item, 'annotations') and content_item.annotations:
-                                for annotation in content_item.annotations:
-                                    if annotation.type == 'url_citation' and hasattr(annotation, 'url'):
-                                        citations.append(annotation.url)
-                            break
-                if content:
-                    break
+            # Raise for HTTP errors (4xx, 5xx)
+            response.raise_for_status()
+            
+            # Parse NDJSON response (split by newlines)
+            response_text = response.text.strip()
+            json_objects = response_text.split('\n')
+            
+            logger.debug(f"Received {len(json_objects)} JSON object(s) from gateway")
+            
+            # According to the test example, we need the second JSON object
+            if len(json_objects) < 2:
+                # If only one object, use it (fallback behavior)
+                if len(json_objects) == 1:
+                    logger.warning("Expected 2 JSON objects in NDJSON response, got 1. Using single object.")
+                    completion_data = json.loads(json_objects[0])
+                else:
+                    raise ValueError("Empty response from gateway")
+            else:
+                # Parse the second JSON object (index 1)
+                completion_data = json.loads(json_objects[1])
+            
+            # Extract assistant's message from choices[0].message.content
+            try:
+                content = completion_data["choices"][0]["message"]["content"]
+            except (KeyError, IndexError) as e:
+                raise ValueError(f"Unexpected response structure: missing choices[0].message.content. Error: {e}")
             
             if not content:
-                raise ValueError("Empty response from LLM")
+                raise ValueError("Empty content in gateway response")
             
             # Strip markdown code blocks if present
             content_stripped = content.strip()
@@ -123,35 +153,68 @@ class OpenAIClientWrapper:
             # Parse JSON response
             result = json.loads(content_stripped)
             
-            # Add extracted citations to root sources (assuming batch structure allows it or just log)
-            # For batch response, citations might belong to specific items. 
-            # Since we can't easily map citations to specific batch items without more complex logic,
-            # we'll log them. If the schema has a top-level 'sources', we'd add them there.
-            # But BatchOffshoreRiskResponse doesn't have top-level sources.
-            if citations:
-                logger.debug(f"Extracted {len(citations)} citations from web_search (batch mode)")
+            # Note: Unlike the template, we do NOT empty the sources list here
+            # because we want to support web_search results if they are included in the JSON output.
             
             logger.debug("Successfully parsed LLM JSON response")
-            if hasattr(response, 'usage'):
-                logger.debug(f"Token usage - Input: {response.usage.input_tokens}, Output: {response.usage.output_tokens}")
+            
+            # Log token usage if available
+            if 'usage' in completion_data:
+                usage = completion_data['usage']
+                input_tokens = usage.get('prompt_tokens', 'N/A')
+                output_tokens = usage.get('completion_tokens', 'N/A')
+                logger.debug(f"Token usage - Input: {input_tokens}, Output: {output_tokens}")
             
             return result
         
+        except requests.exceptions.Timeout as e:
+            logger.error(f"Gateway request timeout after {self.timeout}s: {e}")
+            raise LLMError(
+                f"Gateway request timeout after {self.timeout}s",
+                details={"gateway_url": self.gateway_url, "timeout": self.timeout}
+            )
+        
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"Gateway HTTP error: {e}")
+            error_details = {
+                "gateway_url": self.gateway_url,
+                "status_code": response.status_code if 'response' in locals() else None,
+                "response_text": response.text if 'response' in locals() else None
+            }
+            raise LLMError(
+                f"Gateway returned HTTP error: {e}",
+                details=error_details
+            )
+        
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Gateway request failed: {e}")
+            raise LLMError(
+                f"Failed to connect to gateway: {str(e)}",
+                details={"gateway_url": self.gateway_url, "error": str(e)}
+            )
+        
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse LLM response as JSON: {e}")
-            logger.error(f"Raw response: {content if 'content' in locals() else 'N/A'}")
+            logger.error(f"Failed to parse gateway response as JSON: {e}")
+            logger.error(f"Raw response: {response.text if 'response' in locals() else 'N/A'}")
             if 'content_stripped' in locals() and content_stripped != content:
                 logger.error(f"After stripping markdown: {content_stripped}")
             raise LLMError(
-                f"LLM returned invalid JSON: {e}",
-                details={"raw_response": content if 'content' in locals() else None}
+                f"Gateway returned invalid JSON: {e}",
+                details={"raw_response": response.text if 'response' in locals() else None}
+            )
+        
+        except ValueError as e:
+            logger.error(f"Error parsing gateway response: {e}")
+            raise LLMError(
+                f"Gateway response parsing error: {str(e)}",
+                details={"error": str(e)}
             )
         
         except Exception as e:
-            logger.error(f"OpenAI API call failed: {e}")
+            logger.error(f"Unexpected error calling gateway: {e}")
             raise LLMError(
-                f"OpenAI API call failed: {str(e)}",
-                details={"model": settings.openai_model, "error": str(e)}
+                f"Unexpected error calling gateway: {str(e)}",
+                details={"model": self.model, "error": str(e)}
             )
 
 
