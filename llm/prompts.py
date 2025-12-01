@@ -60,20 +60,25 @@ Any transaction involving these countries/territories should be flagged as offsh
    - If the bank is located in a listed jurisdiction, it is OFFSHORE_YES.
    - Use the address as the primary location indicator.
 
-3. **Special Cases**:
+3. **Counterparty (Payer/Recipient) Checks**:
+   - CRITICAL: You MUST check the Payer/Recipient name and address field for offshore jurisdictions.
+   - Look for country names or codes (e.g., "HK", "Hong Kong", "BVI", "Virgin Islands") within the address text.
+   - **Example**: If the address contains "Hong Kong" or "HK", but the country is listed as "China", it IS offshore (if Hong Kong is in the list). Treat specific regions like Hong Kong or Macau as distinct from their parent countries.
+
+4. **Special Cases**:
    - Some territories (e.g., Wyoming US, Labuan Malaysia, Canary Islands Spain) are offshore even if their parent country is not.
    - If the list contains specific regions (e.g. "Вайоминг (США)", "Малайзия (Лабуан)"), check for these specific locations.
 
-4. **Classification Labels**:
+5. **Classification Labels**:
    - **OFFSHORE_YES**: Bank/Entity is clearly located in a listed offshore jurisdiction.
    - **OFFSHORE_SUSPECT**: Indicators suggest possible offshore involvement but evidence is ambiguous.
    - **OFFSHORE_NO**: Bank/Entity is clearly NOT in a listed offshore jurisdiction.
 
-5. **Web Search**:
+6. **Web Search**:
    - Use `web_search` for ambiguous cases, unknown banks, or to verify specific locations.
    - Cite sources in the `sources` array.
 
-6. **Output Format**:
+7. **Output Format**:
    - You must return a JSON object with a `results` array.
    - Each item in `results` must correspond to one transaction in the input.
    - Maintain the same `transaction_id` for each result.
