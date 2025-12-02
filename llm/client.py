@@ -117,9 +117,12 @@ class OpenAIClientWrapper:
             
             logger.debug(f"Received {len(json_objects)} JSON object(s) from gateway")
             
+            # Log raw response text for debugging
+            logger.debug(f"Raw Gateway Response: {response_text}")
+
             # According to the test example, we need the second JSON object
             if len(json_objects) < 2:
-                # If only one object, use it (fallback behavior)
+                # If only one object, check if it has the expected structure
                 if len(json_objects) == 1:
                     logger.warning("Expected 2 JSON objects in NDJSON response, got 1. Using single object.")
                     completion_data = json.loads(json_objects[0])
@@ -131,8 +134,15 @@ class OpenAIClientWrapper:
             
             # Extract assistant's message from choices[0].message.content
             try:
+                # Check if choices is present
+                if "choices" not in completion_data:
+                     # Debug: Print keys to understand structure
+                    logger.error(f"Response keys: {list(completion_data.keys())}")
+                    raise ValueError(f"Missing 'choices' in response. Full response: {completion_data}")
+
                 content = completion_data["choices"][0]["message"]["content"]
             except (KeyError, IndexError) as e:
+                logger.error(f"Structure error details - Completion Data: {json.dumps(completion_data, indent=2)}")
                 raise ValueError(f"Unexpected response structure: missing choices[0].message.content. Error: {e}")
             
             if not content:
