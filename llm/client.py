@@ -79,10 +79,8 @@ class OpenAIClientWrapper:
         
         # Build request payload for gateway
         payload = {
-            "Model": self.model,
-            "Content": content,
-            "Temperature": temperature,
-            "MaxTokens": 9000,
+            "model": self.model,
+            "input": content,
             "tools": [{"type": "web_search"}],
             "tool_choice": "auto"
         }
@@ -114,11 +112,6 @@ class OpenAIClientWrapper:
             # Parse NDJSON response (split by newlines)
             response_text = response.text.strip()
             json_objects = response_text.split('\n')
-            
-            logger.debug(f"Received {len(json_objects)} JSON object(s) from gateway")
-            
-            # Log raw response text for debugging
-            logger.debug(f"Raw Gateway Response: {response_text}")
 
             # According to the test example, we need the second JSON object
             if len(json_objects) < 2:
@@ -132,18 +125,32 @@ class OpenAIClientWrapper:
                 # Parse the second JSON object (index 1)
                 completion_data = json.loads(json_objects[1])
             
-            # Extract assistant's message from choices[0].message.content
-            try:
-                # Check if choices is present
-                if "choices" not in completion_data:
-                     # Debug: Print keys to understand structure
-                    logger.error(f"Response keys: {list(completion_data.keys())}")
-                    raise ValueError(f"Missing 'choices' in response. Full response: {completion_data}")
-
-                content = completion_data["choices"][0]["message"]["content"]
-            except (KeyError, IndexError) as e:
+            # Extract assistant's message content
+            content = None
+            
+            # Check if it's a standard OpenAI response with choices
+            if "choices" in completion_data:
+                try:
+                    content = completion_data["choices"][0]["message"]["content"]
+                except (KeyError, IndexError):
+                    pass
+            
+            # Check if it's a response with output list (as seen in logs)
+            if not content and "output" in completion_data:
+                for item in completion_data["output"]:
+                    if item.get("type") == "message" and item.get("role") == "assistant":
+                        for content_item in item.get("content", []):
+                            if content_item.get("type") == "output_text":
+                                content = content_item.get("text")
+                                break
+                    if content:
+                        break
+            
+            if not content:
+                 # Debug: Print keys to understand structure
+                logger.error(f"Response keys: {list(completion_data.keys())}")
                 logger.error(f"Structure error details - Completion Data: {json.dumps(completion_data, indent=2)}")
-                raise ValueError(f"Unexpected response structure: missing choices[0].message.content. Error: {e}")
+                raise ValueError("Unexpected response structure: could not find content in 'choices' or 'output'")
             
             if not content:
                 raise ValueError("Empty content in gateway response")
