@@ -119,10 +119,15 @@ class OpenAIClientWrapper:
             
             # According to the test example, we need the second JSON object
             if len(json_objects) < 2:
-                raise ValueError("Expected at least two JSON objects in the response.")
-
-            # Parse the second JSON object (index 1)
-            completion_data = json.loads(json_objects[1])
+                # If only one object, use it (fallback behavior)
+                if len(json_objects) == 1:
+                    logger.warning("Expected 2 JSON objects in NDJSON response, got 1. Using single object.")
+                    completion_data = json.loads(json_objects[0])
+                else:
+                    raise ValueError("Empty response from gateway")
+            else:
+                # Parse the second JSON object (index 1)
+                completion_data = json.loads(json_objects[1])
             
             # Extract assistant's message from choices[0].message.content
             try:
