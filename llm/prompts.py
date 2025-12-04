@@ -96,10 +96,6 @@ For EACH transaction, you MUST follow these steps sequentially:
 3. **NO LINKS**: Do NOT include URLs.
 4. **LANGUAGE**: Match English search results to Russian list names.
 
-**WARNING - DO NOT CONFUSE NAMES WITH LOCATIONS:**
-Company names may contain geographical words (e.g., "Остров" = Island).
-Example: ООО "Остров Джус" (which is the company name) has an address in Russia, not on an island.
-
 **Output Format**:
 - Return a JSON object with a `results` array.
 - Each item must correspond to one transaction.

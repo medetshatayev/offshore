@@ -85,17 +85,11 @@ class OpenAIClientWrapper:
             "tool_choice": "auto"
         }
         
-        # GPT-5 models don't support temperature parameter
-        if "gpt-5" not in self.model.lower():
-            payload["temperature"] = temperature
-        
         # Build headers
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}"
         }
-        
-        logger.debug(f"Calling OpenAI Gateway with model={self.model}, temperature={temperature}")
         
         try:
             # Make POST request to gateway
@@ -106,9 +100,6 @@ class OpenAIClientWrapper:
                 verify=False,  # Disable SSL verification for internal gateway
                 timeout=self.timeout
             )
-            
-            # Log status and raw response for debugging
-            logger.debug(f"Gateway response status: {response.status_code}")
             
             # Raise for HTTP errors (4xx, 5xx)
             response.raise_for_status()
@@ -121,7 +112,6 @@ class OpenAIClientWrapper:
             if len(json_objects) < 2:
                 # If only one object, check if it has the expected structure
                 if len(json_objects) == 1:
-                    logger.warning("Expected 2 JSON objects in NDJSON response, got 1. Using single object.")
                     completion_data = json.loads(json_objects[0])
                 else:
                     raise ValueError("Empty response from gateway")
@@ -173,11 +163,6 @@ class OpenAIClientWrapper:
             
             # Parse JSON response
             result = json.loads(content_stripped)
-            
-            # Note: Unlike the template, we do NOT empty the sources list here
-            # because we want to support web_search results if they are included in the JSON output.
-            
-            logger.debug("Successfully parsed LLM JSON response")
             
             # Log token usage if available
             if 'usage' in completion_data:

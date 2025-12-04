@@ -28,7 +28,7 @@ class OffshoreRiskResponse(BaseModel):
         max_length=500,
         description="Brief reasoning in Russian (1-2 sentences)"
     )
-    sources: Optional[List[str]] = Field(
+    sources: List[str] = Field(
         default_factory=list,
         description="URLs from web_search if used, empty otherwise"
     )
@@ -37,14 +37,13 @@ class OffshoreRiskResponse(BaseModel):
         description="Error message if LLM call failed"
     )
     
-    @field_validator("sources", mode="before")
+    @field_validator("sources")
     @classmethod
     def validate_sources(cls, v):
-        """Ensure sources are valid URLs or empty. Source None to empty list."""
-        if v is None:
-            return []
+        """Ensure sources are valid URLs or empty."""
         if not v:
             return []
+        # Basic URL validation
         validated = []
         for url in v:
             if isinstance(url, str) and (url.startswith("http://") or url.startswith("https://")):

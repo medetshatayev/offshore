@@ -6,7 +6,7 @@ A Python application for detecting potential offshore jurisdiction involvement i
 
 - **High-Value Filtering**: Automatically filters transactions ≥ 5,000,000 KZT.
 - **LLM Analysis**: Uses OpenAI to classify offshore risk (Yes/Suspect/No).
-- **Smart Detection**: Analyzes SWIFT codes, bank addresses, and country codes.
+- **Smart Detection**: Analyzes SWIFT/country codes, payer/receiver and bank addresses.
 - **Web Interface**: Simple UI for uploading files and downloading reports.
 - **Privacy Focused**: Excludes names of physical persons from analysis.
 
@@ -18,7 +18,7 @@ A Python application for detecting potential offshore jurisdiction involvement i
    Create a `.env` file with your OpenAI API key:
    ```bash
    OPENAI_API_KEY=your_key_here
-   OPENAI_MODEL=gpt-4o
+   OPENAI_MODEL=gpt-4.1
    ```
 
 2. **Run the application**:
