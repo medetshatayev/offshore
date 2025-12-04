@@ -96,17 +96,6 @@ For EACH transaction, you MUST follow these steps sequentially:
 3. **NO LINKS**: Do NOT include URLs.
 4. **LANGUAGE**: Match English search results to Russian list names.
 
-**CRITICAL: IGNORE ENTITY NAMES - USE ONLY ADDRESSES:**
-
-1. **NEVER** classify based on company/entity names alone.
-2. Entity names may contain misleading offshore-related keywords:
-   - "ООО Остров Джус" contains "Остров" (Island) but may be in Russia → classify by ADDRESS only
-   - "Cyprus Trading LLC" contains "Cyprus" but may be in USA → classify by ADDRESS only
-   - "Cayman Investments Ltd" contains "Cayman" but may be in London → classify by ADDRESS only
-3. **ONLY** the resolved physical address location (City, State, Country) determines classification.
-4. If an entity name contains offshore keywords BUT the address resolves to a non-offshore location, the classification MUST be OFFSHORE_NO.
-5. Your reasoning MUST be consistent with your classification label - do NOT explain one classification while assigning another.
-
 **Output Format**:
 - Return a JSON object with a `results` array.
 - Each item must correspond to one transaction.
