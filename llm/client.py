@@ -49,7 +49,7 @@ class OpenAIClientWrapper:
         system_prompt: str,
         user_message: str,
         response_schema: Dict[str, Any],
-        temperature: float = 0.1,
+        temperature: float = 0.2,
     ) -> Dict[str, Any]:
         """
         Call OpenAI Gateway completions API with structured output.
@@ -85,13 +85,18 @@ class OpenAIClientWrapper:
             "tool_choice": "auto"
         }
         
+        # gpt-5 models don't support temperature parameter
+        if "gpt-5" not in self.model.lower():
+            payload["temperature"] = temperature
+            logger.debug(f"Calling OpenAI Gateway with model={self.model}, temperature={temperature}")
+        else:
+            logger.debug(f"Calling OpenAI Gateway with model={self.model} (temperature omitted for gpt-5)")
+        
         # Build headers
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}"
         }
-        
-        logger.debug(f"Calling OpenAI Gateway with model={self.model}, temperature={temperature}")
         
         try:
             # Make POST request to gateway
@@ -113,16 +118,12 @@ class OpenAIClientWrapper:
             response_text = response.text.strip()
             json_objects = response_text.split('\n')
 
-            # According to the test example, we need the second JSON object
             if len(json_objects) < 2:
-                # If only one object, check if it has the expected structure
                 if len(json_objects) == 1:
-                    logger.warning("Expected 2 JSON objects in NDJSON response, got 1. Using single object.")
                     completion_data = json.loads(json_objects[0])
                 else:
                     raise ValueError("Empty response from gateway")
             else:
-                # Parse the second JSON object (index 1)
                 completion_data = json.loads(json_objects[1])
             
             # Extract assistant's message content
@@ -135,7 +136,7 @@ class OpenAIClientWrapper:
                 except (KeyError, IndexError):
                     pass
             
-            # Check if it's a response with output list (as seen in logs)
+            # Check if it's a response with output list
             if not content and "output" in completion_data:
                 for item in completion_data["output"]:
                     if item.get("type") == "message" and item.get("role") == "assistant":
@@ -170,17 +171,12 @@ class OpenAIClientWrapper:
             # Parse JSON response
             result = json.loads(content_stripped)
             
-            # Note: Unlike the template, we do NOT empty the sources list here
-            # because we want to support web_search results if they are included in the JSON output.
-            
-            logger.debug("Successfully parsed LLM JSON response")
-            
             # Log token usage if available
             if 'usage' in completion_data:
                 usage = completion_data['usage']
                 input_tokens = usage.get('prompt_tokens', 'N/A')
                 output_tokens = usage.get('completion_tokens', 'N/A')
-                logger.debug(f"Token usage - Input: {input_tokens}, Output: {output_tokens}")
+                logger.info(f"Token usage - Input: {input_tokens}, Output: {output_tokens}")
             
             return result
         
@@ -283,7 +279,9 @@ def create_response_schema() -> Dict[str, Any]:
                         "sources": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "URLs from web_search if used"
+                            "description": "URLs from web_search if used. Must be an empty array [] if no sources used, NEVER null.",
+                            "default": [],
+                            "examples": [[]]
                         },
                         "llm_error": {
                             "type": ["string", "null"],
