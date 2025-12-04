@@ -14,6 +14,9 @@ from llm.prompts import build_system_prompt, build_user_message
 
 logger = setup_logger(__name__)
 
+# Maximum retries for validation errors (malformed LLM output)
+MAX_VALIDATION_RETRIES = 2
+
 
 def classify_batch(
     transactions: List[Dict[str, Any]],
@@ -34,66 +37,80 @@ def classify_batch(
         
     logger.info(f"Classifying batch of {len(transactions)} transactions")
     
-    try:
-        # Build prompts
-        system_prompt = build_system_prompt()
-        user_message = build_user_message(transactions)
-        
-        # Get LLM client
-        client = get_client()
-        
-        # Create response schema
-        response_schema = create_response_schema()
-        
-        # Call LLM
-        llm_response = client.call_with_structured_output(
-            system_prompt=system_prompt,
-            user_message=user_message,
-            response_schema=response_schema,
-            temperature=temperature,
-        )
-        
-        # Validate response with pydantic
-        batch_result = BatchOffshoreRiskResponse(**llm_response)
-        
-        # Map results back to original transactions to ensure order/completeness
-        # Create a map of id -> response
-        response_map = {res.transaction_id: res for res in batch_result.results if res.transaction_id}
-        
-        final_results = []
-        for txn in transactions:
-            txn_id = str(txn.get("id", "unknown"))
+    # Build prompts
+    system_prompt = build_system_prompt()
+    user_message = build_user_message(transactions)
+    
+    # Get LLM client
+    client = get_client()
+    
+    # Create response schema
+    response_schema = create_response_schema()
+    
+    last_validation_error = None
+    
+    # Retry loop for validation errors (malformed LLM output)
+    for attempt in range(MAX_VALIDATION_RETRIES + 1):
+        try:
+            # Call LLM
+            llm_response = client.call_with_structured_output(
+                system_prompt=system_prompt,
+                user_message=user_message,
+                response_schema=response_schema,
+                temperature=temperature,
+            )
             
-            if txn_id in response_map:
-                # Use the returned result
-                result = response_map[txn_id]
+            # Validate response with pydantic
+            batch_result = BatchOffshoreRiskResponse(**llm_response)
+            
+            # Map results back to original transactions to ensure order/completeness
+            # Create a map of id -> response
+            response_map = {res.transaction_id: res for res in batch_result.results if res.transaction_id}
+            
+            final_results = []
+            for txn in transactions:
+                txn_id = str(txn.get("id", "unknown"))
                 
-                # Set amount from local data since we removed it from LLM schema
-                result.amount_kzt = txn.get("amount_kzt", 0.0)
-                
-                final_results.append(result)
-            else:
-                logger.warning(f"Transaction {txn_id} missing from LLM response, marking as error")
-                # Create error response for missing item
-                final_results.append(create_error_response(
-                    txn,
-                    error_msg="LLM failed to return classification for this transaction"
-                ))
+                if txn_id in response_map:
+                    # Use the returned result
+                    result = response_map[txn_id]
+                    
+                    # Set amount from local data since we removed it from LLM schema
+                    result.amount_kzt = txn.get("amount_kzt", 0.0)
+                    
+                    final_results.append(result)
+                else:
+                    logger.warning(f"Transaction {txn_id} missing from LLM response, marking as error")
+                    # Create error response for missing item
+                    final_results.append(create_error_response(
+                        txn,
+                        error_msg="LLM failed to return classification for this transaction"
+                    ))
+            
+            logger.info(f"Batch processed: {len(final_results)} results")
+            return final_results
         
-        logger.info(f"Batch processed: {len(final_results)} results")
-        return final_results
+        except ValidationError as e:
+            last_validation_error = e
+            if attempt < MAX_VALIDATION_RETRIES:
+                logger.warning(f"LLM response validation failed (attempt {attempt + 1}/{MAX_VALIDATION_RETRIES + 1}), retrying: {e}")
+                continue
+            else:
+                logger.error(f"LLM batch response validation failed after {MAX_VALIDATION_RETRIES + 1} attempts: {e}")
+                return [create_error_response(t, f"Validation error: {str(e)}") for t in transactions]
+        
+        except LLMError as e:
+            logger.error(f"LLM error for batch: {e}")
+            return [create_error_response(t, f"LLM error: {e.message}") for t in transactions]
+        
+        except Exception as e:
+            logger.error(f"Unexpected error in batch classification: {e}")
+            return [create_error_response(t, f"Unexpected error: {str(e)}") for t in transactions]
     
-    except ValidationError as e:
-        logger.error(f"LLM batch response validation failed: {e}")
-        return [create_error_response(t, f"Validation error: {str(e)}") for t in transactions]
-    
-    except LLMError as e:
-        logger.error(f"LLM error for batch: {e}")
-        return [create_error_response(t, f"LLM error: {e.message}") for t in transactions]
-    
-    except Exception as e:
-        logger.error(f"Unexpected error in batch classification: {e}")
-        return [create_error_response(t, f"Unexpected error: {str(e)}") for t in transactions]
+    # Handle edge cases
+    if last_validation_error:
+        return [create_error_response(t, f"Validation error: {str(last_validation_error)}") for t in transactions]
+    return [create_error_response(t, "Unknown error in classification") for t in transactions]
 
 
 def create_error_response(

@@ -85,6 +85,10 @@ class OpenAIClientWrapper:
             "tool_choice": "auto"
         }
         
+        # GPT-5 models don't support temperature parameter
+        if "gpt-5" not in self.model.lower():
+            payload["temperature"] = temperature
+        
         # Build headers
         headers = {
             "Content-Type": "application/json",
