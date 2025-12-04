@@ -2,9 +2,16 @@
 Pydantic schemas for request/response validation.
 Defines strict JSON schema for LLM structured output.
 """
-from typing import List, Literal, Optional
+from typing import Annotated, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, Field, field_validator
+
+
+def normalize_sources(v):
+    """Normalize sources field to handle None from LLM responses."""
+    if v is None:
+        return []
+    return v
 
 
 class Classification(BaseModel):
@@ -28,7 +35,7 @@ class OffshoreRiskResponse(BaseModel):
         max_length=500,
         description="Brief reasoning in Russian (1-2 sentences)"
     )
-    sources: List[str] = Field(
+    sources: Annotated[List[str], BeforeValidator(normalize_sources)] = Field(
         default_factory=list,
         description="URLs from web_search if used, empty otherwise"
     )
