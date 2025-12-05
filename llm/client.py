@@ -207,7 +207,7 @@ class OpenAIClientWrapper:
         
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse gateway response as JSON: {e}")
-            raw_response = response.text if "response" in dir() else "N/A"
+            raw_response = response.text if 'response' in locals() else "N/A"
             logger.error(f"Raw response: {raw_response}")
             raise LLMError(
                 f"Gateway returned invalid JSON: {e}",
