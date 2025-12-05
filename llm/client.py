@@ -245,29 +245,39 @@ def create_response_schema() -> Dict[str, Any]:
                     "type": "object",
                     "properties": {
                         "transaction_id": {
-                            "type": ["string", "null"],
-                            "description": "Transaction identifier"
+                            "type": ["string", "integer", "null"],
+                            "description": "Transaction identifier (string or integer)"
                         },
                         "direction": {
-                            "type": "string",
-                            "enum": ["incoming", "outgoing"],
-                            "description": "Transaction direction"
+                            "type": ["string", "null"],
+                            "enum": ["incoming", "outgoing", None],
+                            "description": "Transaction direction (optional)"
                         },
                         "classification": {
-                            "type": "object",
-                            "properties": {
-                                "label": {
+                            "oneOf": [
+                                {
                                     "type": "string",
-                                    "enum": ["OFFSHORE_YES", "OFFSHORE_SUSPECT", "OFFSHORE_NO"]
+                                    "enum": ["OFFSHORE_YES", "OFFSHORE_SUSPECT", "OFFSHORE_NO"],
+                                    "description": "Classification label only"
                                 },
-                                "confidence": {
-                                    "type": "number",
-                                    "minimum": 0.0,
-                                    "maximum": 1.0
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "label": {
+                                            "type": "string",
+                                            "enum": ["OFFSHORE_YES", "OFFSHORE_SUSPECT", "OFFSHORE_NO"]
+                                        },
+                                        "confidence": {
+                                            "type": "number",
+                                            "minimum": 0.0,
+                                            "maximum": 1.0
+                                        }
+                                    },
+                                    "required": ["label"],
+                                    "additionalProperties": False
                                 }
-                            },
-                            "required": ["label", "confidence"],
-                            "additionalProperties": False
+                            ],
+                            "description": "Classification result (string label or object with label and confidence)"
                         },
                         "reasoning_short_ru": {
                             "type": "string",
@@ -284,8 +294,8 @@ def create_response_schema() -> Dict[str, Any]:
                         }
                     },
                     "required": [
-                        "transaction_id", "direction",
-                        "classification", "reasoning_short_ru", "sources", "llm_error"
+                        "transaction_id",
+                        "classification", "reasoning_short_ru"
                     ],
                     "additionalProperties": False
                 },

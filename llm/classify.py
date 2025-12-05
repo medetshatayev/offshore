@@ -93,6 +93,10 @@ def classify_batch(
                 # Set amount from local data since we removed it from LLM schema
                 result.amount_kzt = txn.get("amount_kzt", 0.0)
                 
+                # Set direction from local data if LLM didn't return it
+                if result.direction is None:
+                    result.direction = txn.get("direction", "incoming")
+                
                 final_results.append(result)
             else:
                 logger.warning(f"Transaction {txn_id} missing from LLM response, marking as error")
