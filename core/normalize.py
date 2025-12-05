@@ -97,15 +97,6 @@ def filter_by_threshold(df: pd.DataFrame, threshold: Optional[float] = None) -> 
     mask = amounts.notna() & (amounts >= threshold)
     
     df_filtered = df[mask].copy()
-    
-    # We can optionally attach the normalized amount if needed for LLM context,
-    # but the user requested removing it from output.
-    # We'll add it temporarily to the normalized dicts later, but not to the DF used for export.
-    # If we need it for `normalize_transaction` later, we can re-calculate or extract it there.
-    # Actually, `normalize_transaction` uses `amount_kzt_normalized`. 
-    # Let's pass the normalized amount differently or re-calculate it in `normalize_transaction`.
-    # Re-calculating is cheap.
-    
     after_count = len(df_filtered)
     filtered_out = before_count - after_count
     

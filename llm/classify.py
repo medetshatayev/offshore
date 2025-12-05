@@ -8,13 +8,13 @@ from pydantic import ValidationError
 
 from core.exceptions import LLMError
 from core.logger import setup_logger
-from core.schema import BatchOffshoreRiskResponse, OffshoreRiskResponse, Classification
-from llm.client import get_client, create_response_schema
+from core.schema import BatchOffshoreRiskResponse, Classification, OffshoreRiskResponse
+from llm.client import create_response_schema, get_client
 from llm.prompts import build_system_prompt, build_user_message
 
 logger = setup_logger(__name__)
 
-# Max retries for validation errors (malformed LLM responses)
+# Maximum retries for validation errors (malformed LLM responses)
 MAX_VALIDATION_RETRIES = 3
 
 

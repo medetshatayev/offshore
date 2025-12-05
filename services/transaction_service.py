@@ -1,15 +1,15 @@
 """
 Transaction processing service.
-Encapsulates business logic for processing transactions.
+
+Encapsulates business logic for processing transactions through
+the offshore risk detection pipeline.
 """
 import asyncio
 from typing import Any, Dict, List, Tuple
 
-import pandas as pd
-
 from core.config import get_settings
-from core.exceptions import FileProcessingError, ValidationError
-from core.exporters import export_to_excel, create_output_filename
+from core.exceptions import FileProcessingError
+from core.exporters import create_output_filename, export_to_excel
 from core.logger import setup_logger
 from core.normalize import filter_by_threshold, normalize_transaction
 from core.parsing import parse_excel_file, validate_dataframe
