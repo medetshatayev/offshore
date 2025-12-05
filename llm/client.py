@@ -66,23 +66,23 @@ class OpenAIClientWrapper:
         Raises:
             LLMError: If API call fails after retries
         """
-        # Enhance system prompt with schema instructions
-        system_prompt_with_schema = (
-            f"{system_prompt}\n\n"
-            "Please provide your response in a JSON format that strictly adheres to the following schema:\n"
-            f"{json.dumps(response_schema, indent=2)}\n\n"
-            "Respond ONLY with valid JSON, no additional text before or after."
-        )
-        
         # Build combined content (system + user message)
-        content = f"System: {system_prompt_with_schema}\n\nUser: {user_message}"
+        content = f"System: {system_prompt}\n\nUser: {user_message}"
         
         # Build request payload for gateway
         payload = {
             "model": self.model,
             "input": content,
             "tools": [{"type": "web_search"}],
-            "tool_choice": "auto"
+            "tool_choice": "auto",
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "batch_offshore_risk_response",
+                    "strict": True,
+                    "schema": response_schema
+                }
+            }
         }
         
         # Add temperature only for non-GPT-5 models (GPT-5 doesn't support temperature)
@@ -274,9 +274,9 @@ def create_response_schema() -> Dict[str, Any]:
                             "description": "Brief reasoning in Russian (1-2 sentences)"
                         },
                         "sources": {
-                            "type": "array",
+                            "type": ["array", "null"],
                             "items": {"type": "string"},
-                            "description": "URLs from web_search if used"
+                            "description": "URLs from web_search if used, can be null or empty array"
                         },
                         "llm_error": {
                             "type": ["string", "null"],

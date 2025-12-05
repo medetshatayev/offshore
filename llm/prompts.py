@@ -64,7 +64,7 @@ For EACH transaction, you MUST follow these steps sequentially:
    - **Goal**: Determine the specific **Administrative Division** (State/Province) and Country for the address.
    - **MANDATORY**: If the country is large (e.g., USA, UK, China, Malaysia, Spain, France), you **MUST** identify the specific State/Province/Territory.
    - **Query**: Ask "What state is [City] in?" or "Is [City] in an offshore jurisdiction?".
-   - **Hidden Offshore Check**: Be vigilant for cities in offshore states (e.g., Sheridan/Cheyenne -> Wyoming (USA), Labuan -> Malaysia, Douglas -> Isle of Man).
+   - **Hidden Offshore Check**: Be vigilant for cities in offshore states (e.g., Sheridan/Cheyenne -> Wyoming (USA), Douglas -> Isle of Man).
 
 3. **COMPARE WITH LIST**: 
    - Check if the *resolved* Country OR the *resolved* State/Province appears in the **OFFSHORE JURISDICTIONS LIST**.
