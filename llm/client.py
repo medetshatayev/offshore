@@ -3,14 +3,19 @@ OpenAI client using direct REST API calls to internal gateway.
 Handles API calls with retries and structured output.
 """
 import json
-import urllib3
 from typing import Any, Dict, Optional
-import requests
 
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+import requests
+import urllib3
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from core.config import get_settings
-from core.exceptions import LLMError, ConfigurationError
+from core.exceptions import ConfigurationError, LLMError
 from core.logger import setup_logger
 
 # Disable SSL warnings for internal gateway
@@ -145,13 +150,11 @@ class OpenAIClientWrapper:
                         break
             
             if not content:
-                 # Debug: Print keys to understand structure
                 logger.error(f"Response keys: {list(completion_data.keys())}")
-                logger.error(f"Structure error details - Completion Data: {json.dumps(completion_data, indent=2)}")
-                raise ValueError("Unexpected response structure: could not find content in 'choices' or 'output'")
-            
-            if not content:
-                raise ValueError("Empty content in gateway response")
+                logger.debug(f"Full response: {json.dumps(completion_data, indent=2)}")
+                raise ValueError(
+                    "Unexpected response structure: could not find content in 'choices' or 'output'"
+                )
             
             # Strip markdown code blocks if present
             content_stripped = content.strip()
@@ -186,14 +189,13 @@ class OpenAIClientWrapper:
         
         except requests.exceptions.HTTPError as e:
             logger.error(f"Gateway HTTP error: {e}")
-            error_details = {
-                "gateway_url": self.gateway_url,
-                "status_code": response.status_code if 'response' in locals() else None,
-                "response_text": response.text if 'response' in locals() else None
-            }
             raise LLMError(
                 f"Gateway returned HTTP error: {e}",
-                details=error_details
+                details={
+                    "gateway_url": self.gateway_url,
+                    "status_code": getattr(e.response, "status_code", None),
+                    "response_text": getattr(e.response, "text", None),
+                }
             )
         
         except requests.exceptions.RequestException as e:
@@ -205,12 +207,11 @@ class OpenAIClientWrapper:
         
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse gateway response as JSON: {e}")
-            logger.error(f"Raw response: {response.text if 'response' in locals() else 'N/A'}")
-            if 'content_stripped' in locals() and content_stripped != content:
-                logger.error(f"After stripping markdown: {content_stripped}")
+            raw_response = response.text if 'response' in locals() else "N/A"
+            logger.error(f"Raw response: {raw_response}")
             raise LLMError(
                 f"Gateway returned invalid JSON: {e}",
-                details={"raw_response": response.text if 'response' in locals() else None}
+                details={"raw_response": raw_response}
             )
         
         except ValueError as e:

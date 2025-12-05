@@ -8,9 +8,17 @@ RUN mkdir -p /root/.config/pip && \
     echo "proxy = http://headproxy03.fortebank.com:8080" >> /root/.config/pip/pip.conf && \
     echo "trusted-host = pypi.org files.pythonhosted.org pypi.python.org" >> /root/.config/pip/pip.conf
 
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Install dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
 COPY . .
 
-RUN pip install --no-cache-dir -r requirements.txt
+# Create storage directory
+RUN mkdir -p /app/files
 
 EXPOSE 8000
 

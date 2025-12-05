@@ -2,16 +2,22 @@
 Centralized configuration management.
 All environment variables and settings are defined here.
 """
-import os
 from pathlib import Path
 from typing import Optional
 
+from pydantic import Field, field_validator, ConfigDict
 from pydantic_settings import BaseSettings
-from pydantic import Field, validator
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
+    
+    model_config = ConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
     
     # Application
     app_name: str = Field(default="Offshore Risk Detection Service", alias="APP_NAME")
@@ -33,37 +39,33 @@ class Settings(BaseSettings):
     temp_storage_path: str = Field(default="files", alias="STORAGE_PATH")
     database_path: str = Field(default="offshore.db", alias="DATABASE_PATH")
     
-    @validator("log_level")
-    def validate_log_level(cls, v):
+    @field_validator("log_level")
+    @classmethod
+    def validate_log_level(cls, v: str) -> str:
         """Validate log level is one of the standard levels."""
-        valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
         v_upper = v.upper()
         if v_upper not in valid_levels:
-            raise ValueError(f"Log level must be one of: {valid_levels}")
+            raise ValueError(f"Log level must be one of: {sorted(valid_levels)}")
         return v_upper
     
-    @validator("port")
-    def validate_port(cls, v):
+    @field_validator("port")
+    @classmethod
+    def validate_port(cls, v: int) -> int:
         """Validate port is in valid range."""
         if not (1 <= v <= 65535):
             raise ValueError("Port must be between 1 and 65535")
         return v
     
-    @validator("max_concurrent_llm_calls")
-    def validate_concurrency(cls, v):
+    @field_validator("max_concurrent_llm_calls")
+    @classmethod
+    def validate_concurrency(cls, v: int) -> int:
         """Validate concurrency setting."""
         if v < 1:
             raise ValueError("Max concurrent LLM calls must be at least 1")
         if v > 50:
             raise ValueError("Max concurrent LLM calls should not exceed 50")
         return v
-    
-    class Config:
-        """Pydantic configuration."""
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-        extra = "ignore"
         
     def ensure_directories(self) -> None:
         """Ensure required directories exist."""

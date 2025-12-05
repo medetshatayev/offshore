@@ -4,14 +4,14 @@ Handles both incoming and outgoing transaction outputs.
 """
 from datetime import datetime
 from pathlib import Path
-from typing import Any, List
+from typing import List
 
 import pandas as pd
 
 from core.config import get_settings
 from core.exceptions import ExportError
 from core.logger import setup_logger
-from core.schema import OffshoreRiskResponse, LABEL_TRANSLATIONS
+from core.schema import LABEL_TRANSLATIONS, OffshoreRiskResponse
 
 logger = setup_logger(__name__)
 settings = get_settings()
