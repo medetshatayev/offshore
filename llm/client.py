@@ -3,6 +3,7 @@ OpenAI client using direct REST API calls to internal gateway.
 Handles API calls with retries and structured output.
 """
 import json
+import re
 from typing import Any, Dict, Optional
 
 import requests
@@ -23,6 +24,34 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = setup_logger(__name__)
 settings = get_settings()
+
+
+def extract_json_from_text(content: str) -> str:
+    """
+    Extract JSON from text, handling markdown code blocks and surrounding text.
+    
+    Args:
+        content: Raw text that may contain JSON wrapped in markdown or surrounded by text
+        
+    Returns:
+        Extracted JSON string
+    """
+    content = content.strip()
+    
+    # Try to find JSON in markdown code block first (handles ```json ... ``` or ``` ... ```)
+    pattern = r'```(?:json)?\s*(\{[\s\S]*?\})\s*```'
+    match = re.search(pattern, content)
+    if match:
+        return match.group(1)
+    
+    # Try to find raw JSON object with "results" key (our expected response structure)
+    pattern = r'\{[\s\S]*"results"[\s\S]*\}'
+    match = re.search(pattern, content)
+    if match:
+        return match.group(0)
+    
+    # Return as-is if no patterns matched (let json.loads handle the error)
+    return content
 
 
 class OpenAIClientWrapper:
@@ -80,9 +109,9 @@ class OpenAIClientWrapper:
             "input": content,
             "tools": [{"type": "web_search"}],
             "tool_choice": "auto",
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
+            "text": {
+                "format": {
+                    "type": "json_schema",
                     "name": "batch_offshore_risk_response",
                     "strict": True,
                     "schema": response_schema
@@ -156,17 +185,8 @@ class OpenAIClientWrapper:
                     "Unexpected response structure: could not find content in 'choices' or 'output'"
                 )
             
-            # Strip markdown code blocks if present
-            content_stripped = content.strip()
-            if content_stripped.startswith("```"):
-                # Remove opening
-                lines = content_stripped.split('\n')
-                if lines[0].startswith("```"):
-                    lines = lines[1:]
-                # Remove closing
-                if lines and lines[-1].strip() == "```":
-                    lines = lines[:-1]
-                content_stripped = '\n'.join(lines).strip()
+            # Extract JSON from response (handles markdown code blocks and surrounding text)
+            content_stripped = extract_json_from_text(content)
             
             # Parse JSON response
             result = json.loads(content_stripped)
@@ -251,7 +271,7 @@ def create_response_schema() -> Dict[str, Any]:
                         },
                         "direction": {
                             "type": ["string", "null"],
-                            "enum": ["incoming", "outgoing", None],
+                            "enum": ["incoming", "outgoing"],
                             "description": "Transaction direction (optional)"
                         },
                         "classification": {
