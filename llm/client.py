@@ -128,6 +128,9 @@ class OpenAIClientWrapper:
         }
         
         try:
+            # Log request payload
+            logger.debug(f"LLM request payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
+            
             # Make POST request to gateway
             response = requests.post(
                 self.gateway_url,
@@ -139,6 +142,9 @@ class OpenAIClientWrapper:
             
             # Raise for HTTP errors (4xx, 5xx)
             response.raise_for_status()
+            
+            # Log raw response
+            logger.debug(f"LLM raw response: {response.text}")
             
             # Parse NDJSON response (split by newlines)
             response_text = response.text.strip()
@@ -188,6 +194,9 @@ class OpenAIClientWrapper:
             
             # Parse JSON response
             result = json.loads(content_stripped)
+            
+            # Log parsed result
+            logger.debug(f"LLM parsed result: {json.dumps(result, ensure_ascii=False, indent=2)}")
             
             # Log token usage if available
             if 'usage' in completion_data:
