@@ -75,32 +75,22 @@ For EACH transaction, you MUST follow these steps sequentially:
 
 **CLASSIFICATION LOGIC:**
 
-1. **OFFSHORE_YES** (Confidence: 100%):
+1. **OFFSHORE_YES**:
    - The resolved **Country** OR **State/Province** matches an entry in the Offshore List.
    - OR the **Bank** is located in a listed jurisdiction.
-   - **Reasoning**: "Address resolved to [City, State], which is in the offshore list."
 
-2. **OFFSHORE_NO** (Confidence: 100%):
+2. **OFFSHORE_NO**:
    - The resolved location (City, State, Country) is **DEFINITELY NOT** in the Offshore List.
-   - **Reasoning**: "Address resolved to [City, State, Country], which is NOT in the offshore list."
 
 3. **OFFSHORE_SUSPECT**:
    - Address is MISSING or EMPTY.
    - OR Web Search failed to resolve the location confidently.
-   - **Reasoning**: "Address is missing" or "Could not determine location of [City]."
 
 **IMPORTANT RULES:**
 
 1. **STRICT LIST ADHERENCE**: Use ONLY the provided list.
 2. **CONSISTENCY**: Reuse reasoning for identical entities.
-3. **NO LINKS**: Do NOT include URLs.
-4. **LANGUAGE**: Match English search results to Russian list names.
-
-**Output Format**:
-- Return a JSON object with a `results` array.
-- Each item must correspond to one transaction.
-- Maintain the same `transaction_id`.
-- `reasoning_short_ru` must be in Russian.
+3. **LANGUAGE**: Match English search results to Russian list names. Write `reasoning_short_ru` in Russian.
 """
     return prompt
 
