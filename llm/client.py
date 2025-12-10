@@ -100,22 +100,20 @@ class OpenAIClientWrapper:
         Raises:
             LLMError: If API call fails after retries
         """
-        # Build combined content (system + user message)
-        content = f"System: {system_prompt}\n\nUser: {user_message}"
-        
         # Build request payload for gateway
         payload = {
             "model": self.model,
-            "input": content,
+            "input": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ],
             "tools": [{"type": "web_search"}],
             "tool_choice": "auto",
-            "text": {
-                "format": {
-                    "type": "json_schema",
-                    "name": "batch_offshore_risk_response",
-                    "strict": True,
-                    "schema": response_schema
-                }
+            "response_format": {
+                "type": "json_schema",
+                "name": "batch_offshore_risk_response",
+                "strict": True,
+                "schema": response_schema
             }
         }
         
@@ -266,61 +264,26 @@ def create_response_schema() -> Dict[str, Any]:
                     "type": "object",
                     "properties": {
                         "transaction_id": {
-                            "type": ["string", "integer", "null"],
-                            "description": "Transaction identifier (string or integer)"
-                        },
-                        "direction": {
-                            "type": ["string", "null"],
-                            "enum": ["incoming", "outgoing"],
-                            "description": "Transaction direction (optional)"
+                            "type": "string",
+                            "description": "Transaction identifier"
                         },
                         "classification": {
-                            "oneOf": [
-                                {
-                                    "type": "string",
-                                    "enum": ["OFFSHORE_YES", "OFFSHORE_SUSPECT", "OFFSHORE_NO"],
-                                    "description": "Classification label only"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "label": {
-                                            "type": "string",
-                                            "enum": ["OFFSHORE_YES", "OFFSHORE_SUSPECT", "OFFSHORE_NO"]
-                                        },
-                                        "confidence": {
-                                            "type": "number",
-                                            "minimum": 0.0,
-                                            "maximum": 1.0
-                                        }
-                                    },
-                                    "required": ["label"],
-                                    "additionalProperties": False
-                                }
-                            ],
-                            "description": "Classification result (string label or object with label and confidence)"
+                            "type": "string",
+                            "enum": ["OFFSHORE_YES", "OFFSHORE_SUSPECT", "OFFSHORE_NO"],
+                            "description": "Offshore risk classification"
                         },
                         "reasoning_short_ru": {
                             "type": "string",
                             "description": "Brief reasoning in Russian (1-2 sentences)"
-                        },
-                        "sources": {
-                            "type": ["array", "null"],
-                            "items": {"type": "string"},
-                            "description": "URLs from web_search if used, can be null or empty array"
-                        },
-                        "llm_error": {
-                            "type": ["string", "null"],
-                            "description": "Error message if any"
                         }
                     },
                     "required": [
                         "transaction_id",
-                        "classification", "reasoning_short_ru"
+                        "classification",
+                        "reasoning_short_ru"
                     ],
                     "additionalProperties": False
-                },
-                "description": "List of classification results"
+                }
             }
         },
         "required": ["results"],
