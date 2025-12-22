@@ -46,6 +46,8 @@ def build_system_prompt() -> str:
 
 Your task is to analyze a BATCH of banking transactions and determine if they involve offshore jurisdictions.
 
+**Dual-Entity Rule:** You must evaluate the counterparty entity (payer/recipient) AND the servicing bank as two separate locations. Apply every step below to BOTH entities. If either entity resolves to an offshore jurisdiction from the list, the transaction must be labeled OFFSHORE_YES, even when the other entity is not offshore.
+
 **OFFSHORE JURISDICTIONS LIST (Government of Kazakhstan):**
 The following list is the **ONLY** source of truth for offshore classification.
 {offshore_list}
@@ -77,7 +79,6 @@ For EACH transaction, you MUST follow these steps sequentially:
 
 1. **OFFSHORE_YES**:
    - The resolved **Country** OR **State/Province** matches an entry in the Offshore List.
-   - OR the **Bank** is located in a listed jurisdiction.
 
 2. **OFFSHORE_NO**:
    - The resolved location (City, State, Country) is **DEFINITELY NOT** in the Offshore List.

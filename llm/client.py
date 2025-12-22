@@ -109,7 +109,7 @@ class OpenAIClientWrapper:
             ],
             "tools": [{"type": "web_search"}],
             "tool_choice": "auto",
-            "response_format": {
+            "text": {
                 "type": "json_schema",
                 "name": "batch_offshore_risk_response",
                 "strict": True,
@@ -129,7 +129,7 @@ class OpenAIClientWrapper:
         
         try:
             # Log request payload
-            logger.debug(f"LLM request payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
+            # logger.info(f"LLM request payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
             
             # Make POST request to gateway
             response = requests.post(
@@ -144,7 +144,7 @@ class OpenAIClientWrapper:
             response.raise_for_status()
             
             # Log raw response
-            logger.debug(f"LLM raw response: {response.text}")
+            # logger.info(f"LLM raw response: {response.text}")
             
             # Parse NDJSON response (split by newlines)
             response_text = response.text.strip()
@@ -196,14 +196,14 @@ class OpenAIClientWrapper:
             result = json.loads(content_stripped)
             
             # Log parsed result
-            logger.debug(f"LLM parsed result: {json.dumps(result, ensure_ascii=False, indent=2)}")
+            # logger.info(f"LLM parsed result: {json.dumps(result, ensure_ascii=False, indent=2)}")
             
             # Log token usage if available
             if 'usage' in completion_data:
                 usage = completion_data['usage']
-                input_tokens = usage.get('prompt_tokens', 'N/A')
-                output_tokens = usage.get('completion_tokens', 'N/A')
-                logger.debug(f"Token usage - Input: {input_tokens}, Output: {output_tokens}")
+                input_tokens = usage.get('input_tokens', 'N/A')
+                output_tokens = usage.get('output_tokens', 'N/A')
+                logger.info(f"Token usage - Input: {input_tokens}, Output: {output_tokens}")
             
             return result
         
@@ -283,7 +283,7 @@ def create_response_schema() -> Dict[str, Any]:
                         },
                         "reasoning_short_ru": {
                             "type": "string",
-                            "description": "Brief reasoning in Russian (1-2 sentences)"
+                            "description": "Brief reasoning in Russian (1-2 sentences) under 450 characters"
                         }
                     },
                     "required": [
