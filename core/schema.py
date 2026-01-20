@@ -96,11 +96,13 @@ class TransactionInput(BaseModel):
     city: Optional[str] = None
     payer: Optional[str] = None
     recipient: Optional[str] = None
+    recipient_address: Optional[str] = None
     bank_name: Optional[str] = None
     payer_bank: Optional[str] = None
     recipient_bank: Optional[str] = None
     payer_bank_address: Optional[str] = None
     recipient_bank_address: Optional[str] = None
+    bank_country: Optional[str] = None
     client_category: Optional[str] = None
     payment_details: Optional[str] = None
 

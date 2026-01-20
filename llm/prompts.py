@@ -46,7 +46,15 @@ def build_system_prompt() -> str:
 
 Your task is to analyze a BATCH of banking transactions and determine if they involve offshore jurisdictions.
 
-**Dual-Entity Rule:** You must evaluate the counterparty entity (payer/recipient) AND the servicing bank as two separate locations. Apply every step below to BOTH entities. If either entity resolves to an offshore jurisdiction from the list, the transaction must be labeled OFFSHORE_YES, even when the other entity is not offshore.
+**Dual-Entity Rule:** You must evaluate TWO separate addresses for each transaction:
+1. **Counterparty Address** - The physical/business address of the payer (incoming) or recipient (outgoing)
+2. **Bank Address** - The complete address of the servicing bank (payer's bank for incoming, recipient's bank for outgoing)
+
+Apply the MANDATORY ANALYSIS PROCESS below to BOTH addresses independently. If EITHER address resolves to an offshore jurisdiction from the list, the transaction must be labeled OFFSHORE_YES, even when the other address is not offshore.
+
+**Important:** Bank addresses are provided as multiple fields that form ONE complete address:
+- Bank Address (street/location details) + City + Bank Country → combine these into one complete address for analysis
+- Example: "123 Main St" + "Sheridan" + "USA" → "123 Main St, Sheridan, USA"
 
 **OFFSHORE JURISDICTIONS LIST (Government of Kazakhstan):**
 The following list is the **ONLY** source of truth for offshore classification.
@@ -119,41 +127,55 @@ def build_user_message(transactions: List[Dict[str, Any]]) -> str:
             client_name = txn.get("beneficiary_name", "")
             bank = txn.get("payer_bank", "")
             swift = txn.get("payer_bank_swift", "")
-            bank_address = txn.get("payer_bank_address", "")
-            country = txn.get("payer_country", "")
+            bank_address_parts = [
+                txn.get("payer_bank_address", ""),
+                txn.get("city", ""),
+                txn.get("payer_country", "")
+            ]
+            bank_address_complete = ", ".join([p for p in bank_address_parts if p])
+            counterparty_country = txn.get("payer_country", "")
+            country_code = txn.get("country_code", "")
         else:  # outgoing
             counterparty = txn.get("recipient", "")
+            counterparty_address = txn.get("recipient_address", "")
+            counterparty_country = txn.get("recipient_country", "")
+            country_code = txn.get("country_code", "")
             client_name = txn.get("payer_name", "")
             bank = txn.get("recipient_bank", "")
             swift = txn.get("recipient_bank_swift", "")
-            bank_address = txn.get("recipient_bank_address", "")
-            country = txn.get("recipient_country", "")
-        
-        city = txn.get("city", "")
-        country_code = txn.get("country_code", "")
+            bank_address_parts = [
+                txn.get("recipient_bank_address", ""),
+                txn.get("city", ""),
+                txn.get("bank_country", "")
+            ]
+            bank_address_complete = ", ".join([p for p in bank_address_parts if p])
+            payment_details = txn.get("payment_details", "")
         
         # Build transaction block
         txn_block = [f"Transaction #{i} (ID: {txn_id}, Direction: {direction}):"]
         
         if counterparty:
-            label = "Payer" if direction == "incoming" else "Recipient"
+            label = "Payer Name" if direction == "incoming" else "Recipient Name"
             txn_block.append(f"- {label}: {counterparty}")
+        
+        if direction == "outgoing" and counterparty_address:
+            txn_block.append(f"- Recipient Address (Complete): {counterparty_address}, {counterparty_country} ({country_code})")
 
         if client_category != "Физ" and client_name:
             label = "Beneficiary (Our Client)" if direction == "incoming" else "Payer (Our Client)"
             txn_block.append(f"- {label}: {client_name}")
         
+        bank_label = "Payer Bank" if direction == "incoming" else "Recipient Bank"
+        bank_address_label = "Payer Bank Address (Complete)" if direction == "incoming" else "Recipient Bank Address (Complete)"
+        
         txn_block.extend([
-            f"- Bank: {bank}",
-            f"- SWIFT: {swift}",
-            f"- Address: {bank_address}",
-            f"- City: {city}",
-            f"- Country: {country} ({country_code})"
+            f"- {bank_label}: {bank}",
+            f"- {bank_label} SWIFT: {swift}",
+            f"- {bank_address_label}: {bank_address_complete}"
         ])
         
-        if direction == "outgoing":
-            details = txn.get("payment_details", "")
-            txn_block.append(f"- Details: {details}")
+        if direction == "outgoing" and payment_details:
+            txn_block.append(f"- Payment Details: {payment_details}")
             
         message_parts.append("\n".join(txn_block))
         message_parts.append("")  # Empty line between transactions

@@ -141,18 +141,18 @@ def normalize_transaction(row: pd.Series, direction: str) -> Dict[str, Any]:
     
     # Common fields
     normalized = {
-        "id": safe_get_string(row, "№п/п", "unknown"),
+        "id": safe_get_string(row, "№ п/п" if direction == "outgoing" else "№п/п", "unknown"),
         "direction": direction,
         "amount_kzt": amount_kzt,
         "amount": safe_get_value(row, "Сумма"),
         "currency": safe_get_string(row, "Валюта платежа"),
         "value_date": safe_get_string(row, "Дата валютирования"),
         "acceptance_date": safe_get_string(row, "Дата приема"),
-        "country_residence": safe_get_string(row, "Страна резидентства"),
+        "country_residence": safe_get_string(row, "Страна резидентства" if direction == "incoming" else "Страна резидентства плательщика"),
         "citizenship": safe_get_string(row, "Гражданство"),
-        "city": safe_get_string(row, "Город"),
-        "country_code": safe_get_string(row, "Код страны"),
-        "status": safe_get_string(row, "Состояние"),
+        "city": safe_get_string(row, "Город" if direction == "incoming" else "Город банка"),
+        "country_code": safe_get_string(row, "Код страны" if direction == "incoming" else "Код страны получателя"),
+        "status": safe_get_string(row, "Состояние" if direction == "incoming" else "Состояние платежа"),
     }
     
     # Direction-specific fields
@@ -173,10 +173,12 @@ def normalize_transaction(row: pd.Series, direction: str) -> Dict[str, Any]:
             "payer_name": safe_get_string(row, "Наименование плательщика (наш клиент)"),
             "payer_account": safe_get_string(row, "Номер счета плательщика"),
             "recipient": safe_get_string(row, "Получатель"),
-            "recipient_bank": safe_get_string(row, "Банк получателя"),
+            "recipient_address": safe_get_string(row, "Адрес получателя"),
+            "recipient_bank": safe_get_string(row, "Наименование Банка получателя"),
             "recipient_bank_swift": safe_get_string(row, "SWIFT Банка получателя"),
             "recipient_bank_address": safe_get_string(row, "Адрес банка получателя"),
-            "payment_details": safe_get_string(row, "Детали платежа"),
+            "bank_country": safe_get_string(row, "Страна банка"),
+            "payment_details": safe_get_string(row, "Назначение платежа"),
             "client_category": safe_get_string(row, "Категория клиента"),
             "recipient_country": safe_get_string(row, "Страна получателя")
         })

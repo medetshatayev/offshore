@@ -37,26 +37,33 @@ INCOMING_COLUMNS: Set[str] = {
 
 # Expected columns for outgoing transactions (Cyrillic headers)
 OUTGOING_COLUMNS: Set[str] = {
-    "№п/п",
+    "№ п/п",
+    "Тип документа",
     "Наименование плательщика (наш клиент)",
+    "БИН плательщика",
     "Категория клиента",
-    "Страна резидентства",
+    "Страна резидентства плательщика",
     "Гражданство",
     "Номер счета плательщика",
-    "Дата валютирования",
     "Дата приема",
+    "Дата валютирования",
     "Сумма",
     "Сумма в тенге",
     "Валюта платежа",
+    "КНП",
     "Получатель",
-    "SWIFT Банка получателя",
-    "Город",
-    "Банк получателя",
-    "Адрес банка получателя",
-    "Детали платежа",
-    "Состояние",
-    "Код страны",
+    "Адрес получателя",
     "Страна получателя",
+    "Код страны получателя",
+    "Наименование Банка получателя",
+    "SWIFT Банка получателя",
+    "Адрес банка получателя",
+    "Страна банка",
+    "Город банка",
+    "Назначение платежа",
+    "Состояние платежа",
+    "Референс платежа",
+    "Статус платежа",
 }
 
 
@@ -86,7 +93,9 @@ def parse_excel_file(
         )
     
     # Determine skiprows and engine based on direction and file extension
-    skiprows = 4 if direction == "incoming" else 5
+    # Outgoing: Skip rows 0-4 (first 5 rows) and row 6 (column numbers in row 7)
+    # Incoming: Skip rows 0-3 (first 4 rows)
+    skiprows = 4 if direction == "incoming" else [0, 1, 2, 3, 4, 6]
     engine = "xlrd" if path.suffix.lower() == ".xls" else "openpyxl"
     
     logger.info(f"Parsing {direction} transactions from {path.name} (skiprows={skiprows}, engine={engine})")
@@ -98,6 +107,10 @@ def parse_excel_file(
             skiprows=skiprows,
             engine=engine
         )
+        
+        # Normalize column names: strip whitespace and replace multiple spaces with single space
+        import re
+        df.columns = [re.sub(r'\s+', ' ', str(col).strip()) for col in df.columns]
         
         # Remove completely empty rows
         df = df.dropna(how="all")
