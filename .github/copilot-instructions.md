@@ -17,14 +17,35 @@ This is a FastAPI application that processes banking transactions to detect offs
 
 ## Critical File Formats
 
-**Incoming transactions:** Excel with headers at row 5 (skiprows=4)  
-**Outgoing transactions:** Excel with headers at row 6 (skiprows=5)
+**Both incoming and outgoing transactions:** Excel with headers at row 6 (A6), skiprows=[0,1,2,3,4,6]
+- **Incoming transactions:** 37 columns
+- **Outgoing transactions:** 27 columns
+- **Row 7 contains column numbers** (1-37 or 1-27) and is automatically skipped
 
 All column headers are in **Russian/Cyrillic**. Key columns:
+
+**Common to both:**
 - `Сумма в тенге` (Amount in KZT) - requires normalization via `clean_amount_kzt()`
-- `Плательщик`/`Получатель` (Payer/Recipient) - counterparty names
-- `SWIFT Банка плательщика`/`получателя` - bank SWIFT codes
-- `Адрес банка` - bank addresses (critical for offshore detection)
+- `Валюта платежа` (Payment currency)
+- `Дата валютирования` (Value date)
+
+**Incoming-specific (37 columns total):**
+- `Плательщик (Наименование)` - Payer name
+- `Адрес плательщика` - **NEW: Payer physical address** (critical for offshore detection)
+- `SWIFT код Банка плательщика` - Payer bank SWIFT
+- `Адрес банка плательщика` - Payer bank address
+- `Страна банка плательщика` - **NEW: Payer bank country** (critical for combining with address)
+- `SWIFT код Корреспондента Банка Плательщика(отправителя)` - **NEW: Correspondent bank** (evaluated as 3rd address)
+- `Банк-посредник отправителя 1/2/3` - **NEW: Intermediary banks** (context only)
+
+**Outgoing-specific (27 columns total):**
+- `Получатель` - Recipient name
+- `Адрес получателя` - **NEW: Recipient physical address** (critical for offshore detection)
+- `SWIFT Банка получателя` - Recipient bank SWIFT
+- `Адрес банка получателя` - Recipient bank address
+- `Страна банка` - **NEW: Recipient bank country** (critical for combining with address)
+
+**Column name normalization:** System automatically trims whitespace and replaces multiple spaces with single space to handle formatting variations.
 
 Output adds `Результат` column with format: `Итог: {label_ru} | Уверенность: {conf}% | Объяснение: {reasoning}`
 
@@ -39,7 +60,8 @@ All settings via Pydantic `Settings` class in `core/config.py`. Access with `get
 **Key settings:**
 - `AMOUNT_THRESHOLD_KZT=5000000` - Filter transactions below threshold
 - `MAX_CONCURRENT_LLM_CALLS=5` - Semaphore limit for async batch processing
-- Headers at row 5 (incoming) / row 6 (outgoing) - `skiprows` in `parse_excel_file()`
+- Headers at row 6 (both directions) - `skiprows=[0,1,2,3,4,6]` in `parse_excel_file()`
+  - Skips rows 1-5 (metadata) and row 7 (column numbers)
 
 ## LLM Integration Patterns
 
@@ -99,8 +121,9 @@ CREATE TABLE countries (
 1. **Header row misalignment:**
    - **Symptom:** `Missing expected columns` warning
    - **Cause:** File has different header structure than expected
-   - **Fix:** Verify `skiprows` value in `parse_excel_file()` - incoming=4, outgoing=5
-   - **Debug:** Check logged "Available columns" vs expected column sets
+   - **Fix:** Verify `skiprows` value in `parse_excel_file()` - both directions use `[0,1,2,3,4,6]`
+   - **Note:** Headers must be at row 6 (A6), row 7 contains column numbers and is skipped
+   - **Debug:** Check logged "Available columns" vs expected column sets (37 for incoming, 27 for outgoing)
 
 2. **Amount normalization failures:**
    - **Example:** `"5 000 000,00 KZT"` → removes spaces/commas/`\xa0`, strips " KZT" suffix
@@ -116,7 +139,8 @@ CREATE TABLE countries (
 4. **Cyrillic encoding issues:**
    - Files must use UTF-8 or Windows-1251 (pandas auto-detects)
    - Column names are case-sensitive and must match exactly
-   - No normalization applied to column names during parsing
+   - **Normalization applied:** System trims whitespace and replaces multiple spaces with single space
+   - Handles variations like `"Адрес  получателя"` (double space) → `"Адрес получателя"` (single space)
 
 5. **Empty rows/columns:**
    - `df.dropna(how="all")` removes completely empty rows
@@ -143,9 +167,11 @@ The system prompt enforces a 4-step analysis process:
    - ✅ Correctly resolved: Sheridan, Wyoming → Wyoming is offshore jurisdiction
    - **Pattern:** Cities like Sheridan/Cheyenne require state resolution
 
-3. **Dual-entity rule:**
-   - Must evaluate **both** counterparty AND servicing bank separately
-   - If **either** entity is offshore → `OFFSHORE_YES`
+3. **Multi-address evaluation:**
+   - **Incoming:** Evaluate UP TO THREE addresses: (1) Payer address, (2) Payer bank address, (3) Correspondent bank address
+   - **Outgoing:** Evaluate TWO addresses: (1) Recipient address, (2) Recipient bank address
+   - If **ANY** address is offshore → `OFFSHORE_YES`
+   - Bank addresses combine multiple fields: `Address + City + Bank Country + Country Code`
    - Example: Local company using offshore bank = `OFFSHORE_YES`
 
 4. **Missing/incomplete addresses:**
@@ -159,7 +185,7 @@ The system prompt enforces a 4-step analysis process:
 - Batch size fixed at 10 for consistent quality
 
 **Testing prompt changes:**
-- Edit `build_system_prompt()` or `build_user_message()` in [llm/prompts.py](llm/prompts.py)
+- Edit `build_system_prompt()` or `build_user_message()` in [llm/prompts.py](../llm/prompts.py)
 - Restart app (prompts loaded at runtime, not cached)
 - Monitor `reasoning_short_ru` field in output for quality assessment
 - Check logs for validation retry counts (indicates prompt clarity issues)

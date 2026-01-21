@@ -55,10 +55,31 @@ A Python application for detecting potential offshore jurisdiction involvement i
 ## 📖 Usage
 
 1. **Upload Files**: 
-   - **Incoming**: Excel file with headers at row 5.
-   - **Outgoing**: Excel file with headers at row 6.
+   - **Incoming**: Excel file with 37 columns, headers at row 6 (A6).
+   - **Outgoing**: Excel file with 27 columns, headers at row 6 (A6).
+   - **Note**: Row 7 contains column numbers and is automatically skipped.
 2. **Process**: Click "Process Files" to start analysis.
 3. **Download**: Get the processed Excel files with a new `Результат` column containing risk analysis.
+
+### Input File Format
+
+Both incoming and outgoing Excel files must follow this structure:
+- **Rows 1-5**: Metadata/headers (skipped)
+- **Row 6**: Column names in Cyrillic
+- **Row 7**: Column position numbers 1-37/27 (skipped)
+- **Row 8+**: Transaction data
+
+**Incoming transactions (37 columns)** include:
+- Payer information and address
+- Payer bank details with full address
+- Correspondent bank information
+- Intermediary banks (1-3)
+- Payment details
+
+**Outgoing transactions (27 columns)** include:
+- Recipient information and address
+- Recipient bank details with full address
+- Payment details
 
 ## 📁 Project Structure
 

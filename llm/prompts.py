@@ -46,15 +46,22 @@ def build_system_prompt() -> str:
 
 Your task is to analyze a BATCH of banking transactions and determine if they involve offshore jurisdictions.
 
-**Dual-Entity Rule:** You must evaluate TWO separate addresses for each transaction:
-1. **Counterparty Address** - The physical/business address of the payer (incoming) or recipient (outgoing)
-2. **Bank Address** - The complete address of the servicing bank (payer's bank for incoming, recipient's bank for outgoing)
+**Address Evaluation Rules:**
 
-Apply the MANDATORY ANALYSIS PROCESS below to BOTH addresses independently. If EITHER address resolves to an offshore jurisdiction from the list, the transaction must be labeled OFFSHORE_YES, even when the other address is not offshore.
+**For INCOMING transactions**, you must evaluate UP TO THREE separate addresses:
+1. **Payer Address** - The physical/business address of the payer entity
+2. **Payer Bank Address** - The complete address of the payer's servicing bank
+3. **Correspondent Bank Address** - If present, the address of the correspondent bank (must be evaluated separately)
+
+**For OUTGOING transactions**, you must evaluate TWO separate addresses:
+1. **Recipient Address** - The physical/business address of the recipient entity
+2. **Recipient Bank Address** - The complete address of the recipient's servicing bank
+
+Apply the MANDATORY ANALYSIS PROCESS below to ALL addresses independently. If ANY address resolves to an offshore jurisdiction from the list, the transaction must be labeled OFFSHORE_YES.
 
 **Important:** Bank addresses are provided as multiple fields that form ONE complete address:
-- Bank Address (street/location details) + City + Bank Country → combine these into one complete address for analysis
-- Example: "123 Main St" + "Sheridan" + "USA" → "123 Main St, Sheridan, USA"
+- Bank Address (street/location details) + City + Bank Country + Country Code → combine these into one complete address for analysis
+- Example: "452 FIFTH AVENUE" + "NEW YORK,NY" + "СОЕДИНЕННЫЕ ШТАТЫ АМЕРИКИ" + "US" → "452 FIFTH AVENUE, NEW YORK,NY, USA"
 
 **OFFSHORE JURISDICTIONS LIST (Government of Kazakhstan):**
 The following list is the **ONLY** source of truth for offshore classification.
@@ -124,17 +131,43 @@ def build_user_message(transactions: List[Dict[str, Any]]) -> str:
         # Extract fields
         if direction == "incoming":
             counterparty = txn.get("payer", "")
+            counterparty_address = txn.get("payer_address", "")
             client_name = txn.get("beneficiary_name", "")
             bank = txn.get("payer_bank", "")
             swift = txn.get("payer_bank_swift", "")
+            counterparty_country = txn.get("payer_country", "")
+            country_code = txn.get("country_code", "")
+            
+            # Combine payer address
+            payer_address_parts = [
+                counterparty_address,
+                counterparty_country
+            ]
+            payer_address_complete = ", ".join([p for p in payer_address_parts if p])
+            
+            # Combine bank address
             bank_address_parts = [
                 txn.get("payer_bank_address", ""),
                 txn.get("city", ""),
-                txn.get("payer_country", "")
+                txn.get("bank_country", ""),
+                country_code
             ]
             bank_address_complete = ", ".join([p for p in bank_address_parts if p])
-            counterparty_country = txn.get("payer_country", "")
-            country_code = txn.get("country_code", "")
+            
+            # Correspondent bank info
+            correspondent_name = txn.get("payer_correspondent_name", "")
+            correspondent_address = txn.get("payer_correspondent_address", "")
+            correspondent_swift = txn.get("payer_correspondent_swift", "")
+            
+            # Intermediary banks (context only)
+            intermediary_banks = [
+                txn.get("intermediary_bank_1", ""),
+                txn.get("intermediary_bank_2", ""),
+                txn.get("intermediary_bank_3", "")
+            ]
+            intermediaries_text = " | ".join([ib for ib in intermediary_banks if ib])
+            
+            payment_details = txn.get("payment_details", "")
         else:  # outgoing
             counterparty = txn.get("recipient", "")
             counterparty_address = txn.get("recipient_address", "")
@@ -158,6 +191,9 @@ def build_user_message(transactions: List[Dict[str, Any]]) -> str:
             label = "Payer Name" if direction == "incoming" else "Recipient Name"
             txn_block.append(f"- {label}: {counterparty}")
         
+        if direction == "incoming" and payer_address_complete:
+            txn_block.append(f"- Payer Address (Complete): {payer_address_complete}")
+        
         if direction == "outgoing" and counterparty_address:
             txn_block.append(f"- Recipient Address (Complete): {counterparty_address}, {counterparty_country} ({country_code})")
 
@@ -173,6 +209,20 @@ def build_user_message(transactions: List[Dict[str, Any]]) -> str:
             f"- {bank_label} SWIFT: {swift}",
             f"- {bank_address_label}: {bank_address_complete}"
         ])
+        
+        # Add correspondent bank for incoming (evaluated as third address)
+        if direction == "incoming" and correspondent_name:
+            txn_block.append(f"- Correspondent Bank: {correspondent_name}")
+            txn_block.append(f"- Correspondent Bank SWIFT: {correspondent_swift}")
+            txn_block.append(f"- Correspondent Bank Address (Evaluate separately): {correspondent_address}")
+        
+        # Add intermediary banks for incoming (context only)
+        if direction == "incoming" and intermediaries_text:
+            txn_block.append(f"- Intermediary Banks (Context): {intermediaries_text}")
+        
+        # Add payment details for both directions
+        if direction == "incoming" and payment_details:
+            txn_block.append(f"- Payment Details: {payment_details}")
         
         if direction == "outgoing" and payment_details:
             txn_block.append(f"- Payment Details: {payment_details}")

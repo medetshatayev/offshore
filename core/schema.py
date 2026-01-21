@@ -105,6 +105,17 @@ class TransactionInput(BaseModel):
     bank_country: Optional[str] = None
     client_category: Optional[str] = None
     payment_details: Optional[str] = None
+    # New fields for incoming transactions
+    beneficiary_address: Optional[str] = None
+    beneficiary_bank_swift: Optional[str] = None
+    beneficiary_correspondent_swift: Optional[str] = None
+    payer_address: Optional[str] = None
+    payer_correspondent_swift: Optional[str] = None
+    payer_correspondent_name: Optional[str] = None
+    payer_correspondent_address: Optional[str] = None
+    intermediary_bank_1: Optional[str] = None
+    intermediary_bank_2: Optional[str] = None
+    intermediary_bank_3: Optional[str] = None
 
 
 # Label translations for output

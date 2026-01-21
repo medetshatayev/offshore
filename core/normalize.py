@@ -147,11 +147,11 @@ def normalize_transaction(row: pd.Series, direction: str) -> Dict[str, Any]:
         "amount": safe_get_value(row, "Сумма"),
         "currency": safe_get_string(row, "Валюта платежа"),
         "value_date": safe_get_string(row, "Дата валютирования"),
-        "acceptance_date": safe_get_string(row, "Дата приема"),
-        "country_residence": safe_get_string(row, "Страна резидентства" if direction == "incoming" else "Страна резидентства плательщика"),
+        "acceptance_date": safe_get_string(row, "Дата документа" if direction == "incoming" else "Дата приема"),
+        "country_residence": safe_get_string(row, "Страна резидентства бенефициара" if direction == "incoming" else "Страна резидентства плательщика"),
         "citizenship": safe_get_string(row, "Гражданство"),
-        "city": safe_get_string(row, "Город" if direction == "incoming" else "Город банка"),
-        "country_code": safe_get_string(row, "Код страны" if direction == "incoming" else "Код страны получателя"),
+        "city": safe_get_string(row, "Город банка плательщика" if direction == "incoming" else "Город банка"),
+        "country_code": safe_get_string(row, "Код страны банка плательщика" if direction == "incoming" else "Код страны получателя"),
         "status": safe_get_string(row, "Состояние" if direction == "incoming" else "Состояние платежа"),
     }
     
@@ -160,14 +160,26 @@ def normalize_transaction(row: pd.Series, direction: str) -> Dict[str, Any]:
         normalized.update({
             "beneficiary_name": safe_get_string(row, "Наименование бенефициара (наш клиент)"),
             "beneficiary_account": safe_get_string(row, "Номер счета бенефициара"),
-            "payer": safe_get_string(row, "Плательщик"),
-            "payer_bank": safe_get_string(row, "Банк плательщика"),
-            "payer_bank_swift": safe_get_string(row, "SWIFT Банка плательщика"),
+            "beneficiary_address": safe_get_string(row, "Адрес бенефициара"),
+            "beneficiary_bank_swift": safe_get_string(row, "SWIFT код Банка бенефициара"),
+            "beneficiary_correspondent_swift": safe_get_string(row, "SWIFT код кор.банка бенефициара (Отправитель сообщения)"),
+            "payer": safe_get_string(row, "Плательщик (Наименование)"),
+            "payer_address": safe_get_string(row, "Адрес плательщика"),
+            "payer_country": safe_get_string(row, "Страна резиденства плательщика"),
+            "payer_bank": safe_get_string(row, "Наименование Банка плательщика"),
+            "payer_bank_swift": safe_get_string(row, "SWIFT код Банка плательщика"),
             "payer_bank_address": safe_get_string(row, "Адрес банка плательщика"),
+            "bank_country": safe_get_string(row, "Страна банка плательщика"),
+            "payer_correspondent_swift": safe_get_string(row, "SWIFT код Корреспондента Банка Плательщика(отправителя)"),
+            "payer_correspondent_name": safe_get_string(row, "Наименование Корреспондента Банка Плательщика(отправителя)"),
+            "payer_correspondent_address": safe_get_string(row, "Адрес Корреспондента Банка Плательщика(отправителя)"),
+            "intermediary_bank_1": safe_get_string(row, "Банк-посредник отправителя 1"),
+            "intermediary_bank_2": safe_get_string(row, "Банк-посредник отправителя 2"),
+            "intermediary_bank_3": safe_get_string(row, "Банк-посредник отправителя 3"),
+            "payment_details": safe_get_string(row, "Назначение платежа"),
             "client_category": safe_get_string(row, "Категория клиента"),
-            "payer_country": safe_get_string(row, "Страна отправителя")
         })
-        normalized["swift_code"] = safe_get_string(row, "SWIFT Банка плательщика")
+        normalized["swift_code"] = safe_get_string(row, "SWIFT код Банка плательщика")
     else:  # outgoing
         normalized.update({
             "payer_name": safe_get_string(row, "Наименование плательщика (наш клиент)"),
