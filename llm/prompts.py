@@ -57,7 +57,31 @@ Your task is to analyze a BATCH of banking transactions and determine if they in
 1. **Recipient Address** - The physical/business address of the recipient entity
 2. **Recipient Bank Address** - The complete address of the recipient's servicing bank
 
-Apply the MANDATORY ANALYSIS PROCESS below to ALL addresses independently. If ANY address resolves to an offshore jurisdiction from the list, the transaction must be labeled OFFSHORE_YES.
+**BANK HEADQUARTERS VERIFICATION (MANDATORY):**
+
+In addition to the addresses above, you MUST verify the **registered headquarters location** of EVERY bank involved in the transaction:
+
+**For INCOMING transactions**, verify HQ for:
+- Payer Bank (use bank name + SWIFT code to search)
+- Correspondent Bank (if provided)
+- Intermediary Banks 1, 2, 3 (if provided - each must be verified separately)
+
+**For OUTGOING transactions**, verify HQ for:
+- Recipient Bank (use bank name + SWIFT code to search)
+
+**HQ Verification Logic:**
+- Use the bank name and SWIFT code to web-search: "Where is [Bank Name] headquartered?"
+- Identify the bank's **registered headquarters city and country** (NOT the branch address provided in transaction)
+- For large countries (USA, UK, China, etc.), you MUST identify the specific **state/territory** of the HQ
+- If a bank's HQ is in an offshore jurisdiction → the bank is classified as **offshore** → transaction is `OFFSHORE_YES`
+- If HQ lookup fails or is ambiguous → `OFFSHORE_SUSPECT`
+
+**Examples:**
+- "HSBC Private Bank (Suisse) SA" → HQ: St. Helier, Jersey → Jersey is offshore → `OFFSHORE_YES`
+- "First Wyoming Bank" → HQ: Cheyenne, Wyoming, USA → Wyoming (USA) is offshore → `OFFSHORE_YES`
+- "Deutsche Bank AG" → HQ: Frankfurt, Germany → Germany not offshore → Continue checking other addresses
+
+Apply the MANDATORY ANALYSIS PROCESS below to ALL addresses AND all bank HQ locations. If ANY address OR any bank's headquarters resolves to an offshore jurisdiction from the list, the transaction must be labeled OFFSHORE_YES.
 
 **Important:** Bank addresses are provided as multiple fields that form ONE complete address:
 - Bank Address (street/location details) + City + Bank Country + Country Code → combine these into one complete address for analysis
@@ -77,30 +101,47 @@ For EACH transaction, you MUST follow these steps sequentially:
      - *Example 1*: "123 Main St, Sheridan" -> City: Sheridan, State: Wyoming (WY), Country: USA.
      - *Example 2*: "NO. 109, HONG KONG EAST ROAD, QINGDAO" -> Street: Hong Kong East Rd, City: Qingdao, Country: China. (Do NOT confuse street names with countries).
 
-2. **RESOLVE LOCATION (Web Search)**: 
+2. **IDENTIFY BANK HEADQUARTERS (Web Search)**:
+   - For EACH bank in the transaction (Payer Bank, Correspondent Bank, Intermediary Banks, Recipient Bank):
+   - **Query**: "Where is [Bank Name] headquartered?" or "[Bank Name] [SWIFT code] headquarters location"
+   - **Goal**: Find the bank's **registered headquarters** city, state/province (if applicable), and country.
+   - **CRITICAL for large countries**: If HQ is in USA, UK, China, Malaysia, Spain, France, etc., you MUST identify the specific state/territory.
+   - **Edge cases**:
+     - "Butterfield Bank" → HQ: Hamilton, Bermuda → Bermuda is offshore
+     - "Bank of Wyoming" → HQ: Sheridan, Wyoming, USA → Wyoming (USA) is offshore
+     - "Standard Chartered Bank (Hong Kong)" → Distinguish: Branch in HK vs HQ in London, UK
+   - Record each bank's HQ location for comparison in Step 4.
+
+3. **RESOLVE LOCATION (Web Search)**: 
    - **Goal**: Determine the specific **Administrative Division** (State/Province) and Country for the address.
    - **MANDATORY**: If the country is large (e.g., USA, UK, China, Malaysia, Spain, France), you **MUST** identify the specific State/Province/Territory.
    - **Query**: Ask "What state is [City] in?" or "Is [City] in an offshore jurisdiction?".
    - **Hidden Offshore Check**: Be vigilant for cities in offshore states (e.g., Sheridan/Cheyenne -> Wyoming (USA), Douglas -> Isle of Man).
 
-3. **COMPARE WITH LIST**: 
+4. **COMPARE WITH LIST**: 
    - Check if the *resolved* Country OR the *resolved* State/Province appears in the **OFFSHORE JURISDICTIONS LIST**.
+   - **Apply to ALL**: Entity addresses, bank branch addresses, AND bank headquarters locations from Step 2.
    - The comparison must be exact or linguistically equivalent.
    - **Logic**: If the State/Province is on the list (e.g., "Wyoming (USA)"), it is a MATCH, even if the Country (USA) is not.
 
-4. **CLASSIFY**: Assign the final label based ONLY on the comparison in Step 3.
+5. **CLASSIFY**: Assign the final label based ONLY on the comparison in Step 4.
 
 **CLASSIFICATION LOGIC:**
 
 1. **OFFSHORE_YES**:
-   - The resolved **Country** OR **State/Province** matches an entry in the Offshore List.
+   - ANY entity address (Payer/Recipient) resolves to an offshore jurisdiction, OR
+   - ANY bank branch address resolves to an offshore jurisdiction, OR
+   - ANY bank's **registered headquarters** is located in an offshore jurisdiction.
+   - **Note**: A single offshore match from ANY of the above triggers OFFSHORE_YES.
 
 2. **OFFSHORE_NO**:
-   - The resolved location (City, State, Country) is **DEFINITELY NOT** in the Offshore List.
+   - ALL resolved locations (entity addresses, bank addresses, AND all bank HQ locations) are **DEFINITELY NOT** in the Offshore List.
+   - All bank HQ lookups were successful and resolved to non-offshore locations.
 
 3. **OFFSHORE_SUSPECT**:
-   - Address is MISSING or EMPTY.
-   - OR Web Search failed to resolve the location confidently.
+   - Any entity/bank address is MISSING or EMPTY, OR
+   - Web Search failed to resolve any address location confidently, OR
+   - **Bank HQ lookup failed** or returned ambiguous results for any bank.
 
 **IMPORTANT RULES:**
 
@@ -159,14 +200,6 @@ def build_user_message(transactions: List[Dict[str, Any]]) -> str:
             correspondent_address = txn.get("payer_correspondent_address", "")
             correspondent_swift = txn.get("payer_correspondent_swift", "")
             
-            # Intermediary banks (context only)
-            intermediary_banks = [
-                txn.get("intermediary_bank_1", ""),
-                txn.get("intermediary_bank_2", ""),
-                txn.get("intermediary_bank_3", "")
-            ]
-            intermediaries_text = " | ".join([ib for ib in intermediary_banks if ib])
-            
             payment_details = txn.get("payment_details", "")
         else:  # outgoing
             counterparty = txn.get("recipient", "")
@@ -205,20 +238,28 @@ def build_user_message(transactions: List[Dict[str, Any]]) -> str:
         bank_address_label = "Payer Bank Address (Complete)" if direction == "incoming" else "Recipient Bank Address (Complete)"
         
         txn_block.extend([
-            f"- {bank_label}: {bank}",
+            f"- {bank_label}: {bank} → VERIFY HQ LOCATION",
             f"- {bank_label} SWIFT: {swift}",
             f"- {bank_address_label}: {bank_address_complete}"
         ])
         
-        # Add correspondent bank for incoming (evaluated as third address)
+        # Add correspondent bank for incoming (evaluate address AND verify HQ)
         if direction == "incoming" and correspondent_name:
-            txn_block.append(f"- Correspondent Bank: {correspondent_name}")
+            txn_block.append(f"- Correspondent Bank: {correspondent_name} → VERIFY HQ LOCATION")
             txn_block.append(f"- Correspondent Bank SWIFT: {correspondent_swift}")
             txn_block.append(f"- Correspondent Bank Address (Evaluate separately): {correspondent_address}")
         
-        # Add intermediary banks for incoming (context only)
-        if direction == "incoming" and intermediaries_text:
-            txn_block.append(f"- Intermediary Banks (Context): {intermediaries_text}")
+        # Add intermediary banks for incoming (must verify HQ for each)
+        if direction == "incoming":
+            intermediary_bank_1 = txn.get("intermediary_bank_1", "")
+            intermediary_bank_2 = txn.get("intermediary_bank_2", "")
+            intermediary_bank_3 = txn.get("intermediary_bank_3", "")
+            if intermediary_bank_1:
+                txn_block.append(f"- Intermediary Bank 1: {intermediary_bank_1} → VERIFY HQ LOCATION")
+            if intermediary_bank_2:
+                txn_block.append(f"- Intermediary Bank 2: {intermediary_bank_2} → VERIFY HQ LOCATION")
+            if intermediary_bank_3:
+                txn_block.append(f"- Intermediary Bank 3: {intermediary_bank_3} → VERIFY HQ LOCATION")
         
         # Add payment details for both directions
         if direction == "incoming" and payment_details:

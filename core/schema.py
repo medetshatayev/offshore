@@ -51,8 +51,8 @@ class OffshoreRiskResponse(BaseModel):
     reasoning_short_ru: str = Field(
         ...,
         min_length=10,
-        max_length=500,
-        description="Brief reasoning in Russian (1-2 sentences)"
+        max_length=1000,
+        description="Brief reasoning in Russian (1-3 sentences)"
     )
     sources: Annotated[List[str], BeforeValidator(normalize_sources)] = Field(
         default_factory=list,
