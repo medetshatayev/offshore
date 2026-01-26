@@ -57,8 +57,8 @@ def build_system_prompt() -> str:
 For each transaction, evaluate ALL of the following:
 
 ### A. Entity Addresses
-- **Incoming**: Payer Address (physical/business location)
-- **Outgoing**: Recipient Address (physical/business location)
+- **Incoming**: Payer Address (physical/business location) AND Actual Payer Address (if provided) AND Actual Recipient Address (if provided)
+- **Outgoing**: Recipient Address (physical/business location) AND Actual Recipient Address (if provided)
 
 ### B. Bank Branch Addresses  
 - **Incoming**: Payer Bank Address, Correspondent Bank Address (if provided)
@@ -80,7 +80,7 @@ You MUST verify the **registered headquarters location** of every bank:
 For each address and bank:
 
 1. **Parse addresses** into components: Street, City, State/Province, Country
-   - ⚠️ Don't confuse street names with locations: "HONG KONG EAST ROAD, QINGDAO" → City: Qingdao, China (NOT Hong Kong)
+   - Don't confuse street names with locations: "HONG KONG EAST ROAD, QINGDAO" → City: Qingdao, China (NOT Hong Kong)
 
 2. **Search for bank HQ locations**: Query "[Bank Name] headquarters location" or "[Bank Name] [SWIFT] head office"
    - Goal: Find the bank's **registered headquarters** city and country
@@ -175,6 +175,18 @@ def build_user_message(transactions: List[Dict[str, Any]]) -> str:
             correspondent_address = txn.get("payer_correspondent_address", "")
             correspondent_swift = txn.get("payer_correspondent_swift", "")
             
+            # Actual addresses (beneficial owners)
+            actual_payer_address = txn.get("actual_payer_address", "")
+            actual_payer_country = txn.get("actual_payer_residence_country", "")
+            actual_recipient_address = txn.get("actual_recipient_address", "")
+            
+            # Combine actual payer address
+            actual_payer_address_parts = [
+                actual_payer_address,
+                actual_payer_country
+            ]
+            actual_payer_address_complete = ", ".join([p for p in actual_payer_address_parts if p])
+            
             payment_details = txn.get("payment_details", "")
         else:  # outgoing
             counterparty = txn.get("recipient", "")
@@ -201,6 +213,12 @@ def build_user_message(transactions: List[Dict[str, Any]]) -> str:
         
         if direction == "incoming" and payer_address_complete:
             txn_block.append(f"- Payer Address (Complete): {payer_address_complete}")
+        
+        if direction == "incoming" and actual_payer_address_complete:
+            txn_block.append(f"- Actual Payer Address (Evaluate as additional address): {actual_payer_address_complete}")
+        
+        if direction == "incoming" and actual_recipient_address:
+            txn_block.append(f"- Actual Recipient Address (Evaluate as additional address): {actual_recipient_address}")
         
         if direction == "outgoing" and counterparty_address:
             txn_block.append(f"- Recipient Address (Complete): {counterparty_address}, {counterparty_country} ({country_code})")

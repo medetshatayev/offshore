@@ -116,6 +116,10 @@ class TransactionInput(BaseModel):
     intermediary_bank_1: Optional[str] = None
     intermediary_bank_2: Optional[str] = None
     intermediary_bank_3: Optional[str] = None
+    # Actual payer/recipient address fields (beneficial owners)
+    actual_payer_address: Optional[str] = None
+    actual_payer_residence_country: Optional[str] = None
+    actual_recipient_address: Optional[str] = None
 
 
 # Label translations for output

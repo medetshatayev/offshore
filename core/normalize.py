@@ -178,6 +178,10 @@ def normalize_transaction(row: pd.Series, direction: str) -> Dict[str, Any]:
             "intermediary_bank_3": safe_get_string(row, "Банк-посредник отправителя 3"),
             "payment_details": safe_get_string(row, "Назначение платежа"),
             "client_category": safe_get_string(row, "Категория клиента"),
+            # Actual payer/recipient address fields (beneficial owners)
+            "actual_payer_address": safe_get_string(row, "Адрес фактического плательщика"),
+            "actual_payer_residence_country": safe_get_string(row, "Страна резиденства фактического плательщика"),
+            "actual_recipient_address": safe_get_string(row, "Адрес фактического получателя"),
         })
         normalized["swift_code"] = safe_get_string(row, "SWIFT код Банка плательщика")
     else:  # outgoing
