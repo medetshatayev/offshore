@@ -103,7 +103,7 @@ class OpenAIClientWrapper:
         # Build request payload for gateway
         payload = {
             "model": self.model,
-            "reasoning": {"effort": "medium"},
+            "reasoning": {"effort": "low"},
             "input": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
@@ -130,7 +130,7 @@ class OpenAIClientWrapper:
         
         try:
             # Log request payload
-            logger.info(f"Payload user message: {json.dumps(user_message, ensure_ascii=False, indent=2)}")
+            # logger.info(f"Payload user message: {json.dumps(user_message, ensure_ascii=False, indent=2)}")
             
             # Make POST request to gateway
             response = requests.post(
@@ -197,7 +197,7 @@ class OpenAIClientWrapper:
             result = json.loads(content_stripped)
             
             # Log parsed result
-            logger.info(f"LLM parsed result: {json.dumps(result, ensure_ascii=False, indent=2)}")
+            # logger.info(f"LLM parsed result: {json.dumps(result, ensure_ascii=False, indent=2)}")
             
             # Log token usage if available
             if 'usage' in completion_data:
@@ -284,7 +284,7 @@ def create_response_schema() -> Dict[str, Any]:
                         },
                         "reasoning_short_ru": {
                             "type": "string",
-                            "description": "Brief reasoning in Russian (1-2 sentences) under 450 characters"
+                            "description": "Brief reasoning in Russian (1-2 sentences) under 500 characters"
                         },
                         "sources": {
                             "type": "array",
