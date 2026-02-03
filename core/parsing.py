@@ -121,14 +121,22 @@ def parse_excel_file(
     skiprows = [0, 1, 2, 3, 4, 6]
     engine = "xlrd" if path.suffix.lower() == ".xls" else "openpyxl"
     
+    # Define dtype for BIN/ИИН columns to preserve leading zeros
+    dtype_spec = {
+        "ИИН/БИН бенефициара": str
+    } if direction == "incoming" else {
+        "БИН плательщика": str
+    }
+    
     logger.info(f"Parsing {direction} transactions from {path.name} (skiprows={skiprows}, engine={engine})")
     
     try:
-        # Read with appropriate engine
+        # Read with appropriate engine and dtype to preserve BIN leading zeros
         df = pd.read_excel(
             file_path,
             skiprows=skiprows,
-            engine=engine
+            engine=engine,
+            dtype=dtype_spec
         )
         
         # Normalize column names: strip whitespace and replace multiple spaces with single space

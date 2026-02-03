@@ -113,6 +113,13 @@ def export_to_excel(
             workbook = writer.book
             worksheet = writer.sheets[sheet_name]
             
+            # Format BIN/ИИН columns as text to preserve leading zeros
+            text_format = workbook.add_format({"num_format": "@"})  # @ = text format
+            bin_columns = ["ИИН/БИН бенефициара", "БИН плательщика"]
+            for idx, col in enumerate(output_df.columns):
+                if col in bin_columns:
+                    worksheet.set_column(idx, idx, 15, text_format)
+            
             # Format Результат column to wrap text
             wrap_format = workbook.add_format({"text_wrap": True, "valign": "top"})
             result_col_idx = len(output_df.columns) - 1  # Last column
@@ -120,11 +127,12 @@ def export_to_excel(
             
             # Auto-fit other columns (approximate)
             for idx, col in enumerate(output_df.columns[:-1]):  # Exclude last (Результат)
-                max_len = max(
-                    output_df[col].astype(str).map(len).max(),
-                    len(str(col))
-                )
-                worksheet.set_column(idx, idx, min(max_len + 2, 50))
+                if col not in bin_columns:  # Skip BIN columns (already formatted)
+                    max_len = max(
+                        output_df[col].astype(str).map(len).max(),
+                        len(str(col))
+                    )
+                    worksheet.set_column(idx, idx, min(max_len + 2, 50))
         
         logger.info(f"Successfully exported to {output_path}")
         return output_path

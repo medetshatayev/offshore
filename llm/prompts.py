@@ -57,7 +57,7 @@ def build_system_prompt() -> str:
 For each transaction, evaluate ALL of the following:
 
 ### A. Entity Addresses
-- **Incoming**: Payer Address (physical/business location) AND Actual Payer Address (if provided) AND Actual Recipient Address (if provided)
+- **Incoming**: Payer Address (physical/business location) AND Actual Payer Address (if provided) AND Actual Recipient Address (if provided) AND Beneficiary Address (our client)
 - **Outgoing**: Recipient Address (physical/business location) AND Actual Recipient Address (if provided)
 
 ### B. Bank Branch Addresses  
@@ -71,37 +71,67 @@ You MUST verify the **registered headquarters location** of every bank:
 
 **HQ ≠ Branch**: The branch address in transaction data is NOT the headquarters. You must search for where the bank is legally registered/headquartered.
 
+### D. Country Codes (MANDATORY - Check Against List)
+You MUST check residence country codes and citizenship codes against the offshore list:
+- **Incoming**: Beneficiary Residence Country Code, Beneficiary Citizenship
+- **Outgoing**: Payer Residence Country Code, Payer Citizenship
+
+**Country Code Matching Rules:**
+- Translate ISO codes to full country names (VG → Virgin Islands → Виргинские Острова)
+- Check if the country name matches ANY entry in the Offshore Jurisdictions List
+- **EXCEPTION**: For countries with ONLY partial offshore territories (USA, China, Spain), the bare country code alone is NOT offshore
+  - Example: "US" alone = not offshore, "Wyoming" or "WY" = offshore
+  - Example: "CN" alone = not offshore, "Hong Kong" or "HK" = offshore
+  - Example: "ES" alone = not offshore, but specific Canary Islands = offshore
+- For all other countries in the list, the country code match triggers OFFSHORE_YES
+
+**CRITICAL**: Evaluate address text and country code fields INDEPENDENTLY:
+- If address text indicates offshore location → OFFSHORE_YES
+- OR if country code matches offshore jurisdiction → OFFSHORE_YES
+- Do NOT prioritize one over the other; both are equally valid indicators
+
 ---
 
 ## 3-STEP ANALYSIS PROCESS
 
 ### Step 1: EXTRACT & SEARCH
 
-For each address and bank:
+For each address, country code, and bank:
 
 1. **Parse addresses** into components: Street, City, State/Province, Country
    - Don't confuse street names with locations: "HONG KONG EAST ROAD, QINGDAO" → City: Qingdao, China (NOT Hong Kong)
+   - **Address independence**: If address text contradicts a separate country field, evaluate BOTH independently
+     - Example: Address says "TUEN MUN IND CTR HONG KONG" + Country field says "USA"
+     - Evaluate address: Hong Kong → offshore
+     - Evaluate country: USA → not offshore (no state specified)
+     - Result: OFFSHORE_YES (address is offshore)
 
-2. **Search for bank HQ locations**: Query "[Bank Name] headquarters location" or "[Bank Name] [SWIFT] head office"
+2. **Translate country codes** to full names and check against list
+   - ISO 2-letter codes: HK, VG, KY, BM, etc.
+   - Translate to English (HK → Hong Kong), then match to Russian list entry (Гонконг)
+   - Apply partial offshore country exception (see Country Code Matching Rules above)
+
+3. **Search for bank HQ locations**: Query "[Bank Name] headquarters location" or "[Bank Name] [SWIFT] head office"
    - Goal: Find the bank's **registered headquarters** city and country
    - Example: "Butterfield Bank" → HQ: Hamilton, Bermuda
 
-3. **For large countries (USA, UK, China, etc.)**: You MUST identify the specific **state/territory**
+4. **For large countries (USA, UK, China, etc.)**: You MUST identify the specific **state/territory**
    - Example: "Sheridan, USA" → Search reveals: Sheridan, Wyoming, USA → Wyoming is offshore
 
 ### Step 2: COMPARE WITH LIST
 
-Check if ANY resolved location (country OR state/territory) appears in the Offshore Jurisdictions List above.
+Check if ANY resolved location (country OR state/territory) OR country code appears in the Offshore Jurisdictions List above.
 
 - The list contains names in Russian. Match by meaning, not spelling (e.g., "Bermuda" = "Бермудские острова")
 - Some states/territories are offshore even if the parent country is not: A Wyoming address triggers OFFSHORE_YES, but a California address does not
+- Country codes must be translated and matched: VG → Virgin Islands → Виргинские Острова (match)
 
 ### Step 3: CLASSIFY
 
 | Condition | Label |
 |-----------|-------|
-| ANY address OR bank HQ is in offshore jurisdiction | **OFFSHORE_YES** |
-| ALL locations resolved AND none are offshore | **OFFSHORE_NO** |
+| ANY address OR bank HQ OR country code is in offshore jurisdiction | **OFFSHORE_YES** |
+| ALL locations resolved AND none are offshore AND no country code matches | **OFFSHORE_NO** |
 | Missing/empty address OR search failed OR HQ lookup ambiguous | **OFFSHORE_SUSPECT** |
 
 ---
@@ -115,6 +145,9 @@ Check if ANY resolved location (country OR state/territory) appears in the Offsh
 | "Deutsche Bank AG" | HQ: Frankfurt, Germany | Continue checking (Germany not offshore) |
 | "Standard Chartered Bank (Hong Kong)" | Branch in HK, but HQ: London, UK | Check both: HK=offshore, London=not → OFFSHORE_YES |
 | "123 Main St, Sheridan" (no country) | Search → Sheridan, Wyoming, USA | OFFSHORE_YES (Wyoming is offshore) |
+| Residence Country Code: "VG" | VG → Virgin Islands → Виргинские Острова | OFFSHORE_YES (code matches list) |
+| Residence Country Code: "HK" | HK → Hong Kong → Гонконг | OFFSHORE_YES (code matches list) |
+| Address: "TUEN MUN, HONG KONG" + Country: "USA" | Address → HK (offshore), Country → US (not offshore) | OFFSHORE_YES (address is offshore) |
 
 ---
 
@@ -123,6 +156,7 @@ Check if ANY resolved location (country OR state/territory) appears in the Offsh
 1. **Strict list adherence**: Only use the Offshore Jurisdictions List above
 2. **Consistency**: Same entity across transactions = same reasoning
 3. **Language**: Write `reasoning_short_ru` in Russian (1-3 sentences summarizing the key finding)
+4. **Sources**: Include URLs from web_search in the `sources` array if you used web search to verify locations or bank headquarters
 """
     return prompt
 
@@ -219,6 +253,29 @@ def build_user_message(transactions: List[Dict[str, Any]]) -> str:
         
         if direction == "incoming" and actual_recipient_address:
             txn_block.append(f"- Actual Recipient Address (Evaluate as additional address): {actual_recipient_address}")
+        
+        # Add beneficiary (our client) residence info for incoming
+        if direction == "incoming":
+            beneficiary_address = txn.get("beneficiary_address", "")
+            country_residence = txn.get("country_residence", "")
+            citizenship = txn.get("citizenship", "")
+            
+            if beneficiary_address:
+                txn_block.append(f"- Beneficiary Address (Our Client - Evaluate): {beneficiary_address}")
+            if country_residence:
+                txn_block.append(f"- Beneficiary Residence Country Code (Evaluate): {country_residence}")
+            if citizenship:
+                txn_block.append(f"- Beneficiary Citizenship (Evaluate): {citizenship}")
+        
+        # Add payer residence info for outgoing
+        if direction == "outgoing":
+            country_residence = txn.get("country_residence", "")
+            citizenship = txn.get("citizenship", "")
+            
+            if country_residence:
+                txn_block.append(f"- Payer (Our Client) Residence Country Code (Evaluate): {country_residence}")
+            if citizenship:
+                txn_block.append(f"- Payer (Our Client) Citizenship (Evaluate): {citizenship}")
         
         if direction == "outgoing" and counterparty_address:
             txn_block.append(f"- Recipient Address (Complete): {counterparty_address}, {counterparty_country} ({country_code})")

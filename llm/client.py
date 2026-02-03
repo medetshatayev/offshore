@@ -83,7 +83,7 @@ class OpenAIClientWrapper:
         system_prompt: str,
         user_message: str,
         response_schema: Dict[str, Any],
-        temperature: float = 0.1,
+        temperature: float = 0.2,
     ) -> Dict[str, Any]:
         """
         Call OpenAI Gateway completions API with structured output.
@@ -103,6 +103,7 @@ class OpenAIClientWrapper:
         # Build request payload for gateway
         payload = {
             "model": self.model,
+            "reasoning": {"effort": "medium"},
             "input": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
@@ -129,7 +130,7 @@ class OpenAIClientWrapper:
         
         try:
             # Log request payload
-            # logger.info(f"LLM request payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
+            logger.info(f"Payload user message: {json.dumps(user_message, ensure_ascii=False, indent=2)}")
             
             # Make POST request to gateway
             response = requests.post(
@@ -144,7 +145,7 @@ class OpenAIClientWrapper:
             response.raise_for_status()
             
             # Log raw response
-            # logger.info(f"LLM raw response: {response.text}")
+            # logger.info(f"LLM raw response: {json.dumps(response.text, ensure_ascii=False, indent=2)}")
             
             # Parse NDJSON response (split by newlines)
             response_text = response.text.strip()
@@ -184,7 +185,7 @@ class OpenAIClientWrapper:
             
             if not content:
                 logger.error(f"Response keys: {list(completion_data.keys())}")
-                logger.debug(f"Full response: {json.dumps(completion_data, indent=2)}")
+                # logger.info(f"Full response: {json.dumps(completion_data, indent=2)}")
                 raise ValueError(
                     "Unexpected response structure: could not find content in 'choices' or 'output'"
                 )
@@ -196,7 +197,7 @@ class OpenAIClientWrapper:
             result = json.loads(content_stripped)
             
             # Log parsed result
-            # logger.info(f"LLM parsed result: {json.dumps(result, ensure_ascii=False, indent=2)}")
+            logger.info(f"LLM parsed result: {json.dumps(result, ensure_ascii=False, indent=2)}")
             
             # Log token usage if available
             if 'usage' in completion_data:
@@ -284,12 +285,18 @@ def create_response_schema() -> Dict[str, Any]:
                         "reasoning_short_ru": {
                             "type": "string",
                             "description": "Brief reasoning in Russian (1-2 sentences) under 450 characters"
+                        },
+                        "sources": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Citation URLs from web search (include URLs if web_search was used, otherwise empty array)"
                         }
                     },
                     "required": [
                         "transaction_id",
                         "classification",
-                        "reasoning_short_ru"
+                        "reasoning_short_ru",
+                        "sources"
                     ],
                     "additionalProperties": False
                 }
