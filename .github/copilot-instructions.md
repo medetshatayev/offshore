@@ -91,6 +91,12 @@ All settings via Pydantic `Settings` class in `core/config.py`. Access with `get
 
 **Privacy:** System intentionally excludes physical person names from LLM analysis (see `normalize_transaction()` in `core/normalize.py`) - only category/metadata sent.
 
+**Outgoing payment status filtering (`filter_by_payment_status`):**
+- Applied only to **outgoing** transactions, after amount threshold filtering
+- Excludes rows where `Статус платежа` is "Отказано в исполнении" or "Удален" (case-insensitive, whitespace-normalized)
+- If column `Статус платежа` is missing, logs warning and returns df unchanged
+- Pipeline order: amount filter → status filter (outgoing only) → normalization → LLM
+
 **Offshore Database:** Offshore jurisdiction list loaded from SQLite (`core/db.py`) and embedded in system prompt. List is government-provided, authoritative source.
 
 ## Offshore Database Schema
@@ -179,13 +185,23 @@ The system prompt enforces a 4-step analysis process:
    - Failed web search → `OFFSHORE_SUSPECT`
    - Never default to `OFFSHORE_NO` without confident location resolution
 
+5. **Entity HQ search (company headquarters verification):**
+   - For every named company (counterparty and our client when `client_category != "Физ"`), the LLM is instructed to search for the company’s registered head office address
+   - Annotation `→ SEARCH COMPANY HQ BY NAME` is appended to company names in the user message, following the same pattern as `→ VERIFY HQ LOCATION` for banks
+   - Both the transaction field address and the found HQ address are evaluated independently against the offshore list
+   - If either is offshore → `OFFSHORE_YES`
+   - Individual persons (`Физ` category) are excluded: their names are not sent to the LLM, so no HQ search occurs
+   - **Failed HQ lookup ≠ SUSPECT**: If the company is too small/obscure to find online, but all other data (field addresses, bank addresses, country codes) clearly resolves to non-offshore → `OFFSHORE_NO`. `OFFSHORE_SUSPECT` is only for cases where core location data is missing/unresolvable.
+   - Example: Company with field address in Kazakhstan but HQ in BVI → `OFFSHORE_YES`
+   - Example: Small Kazakh company HQ not found, all addresses in Kazakhstan → `OFFSHORE_NO`
+
 **Temperature & retries:**
 - `temperature=0.1` (near-deterministic responses)
 - 3 validation retries on `ValidationError` (malformed JSON)
 - Batch size fixed at 10 for consistent quality
 
 **Testing prompt changes:**
-- Edit `build_system_prompt()` or `build_user_message()` in [llm/prompts.py](../llm/prompts.py)
+- Edit `build_system_prompt()` or `build_user_message()` in `llm/prompts.py`
 - Restart app (prompts loaded at runtime, not cached)
 - Monitor `reasoning_short_ru` field in output for quality assessment
 - Check logs for validation retry counts (indicates prompt clarity issues)
@@ -236,3 +252,6 @@ No test suite currently exists in codebase. For manual testing:
 - Excel parsing failures: Verify `skiprows` value matches actual header row
 - LLM timeouts: Increase `OPENAI_TIMEOUT` (default 60s)
 - Concurrency bottlenecks: Adjust `MAX_CONCURRENT_LLM_CALLS` based on API limits
+
+
+[def]: ./llm/prompts.py)

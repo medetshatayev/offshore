@@ -11,7 +11,7 @@ from core.config import get_settings
 from core.exceptions import FileProcessingError
 from core.exporters import create_output_filename, export_to_excel
 from core.logger import setup_logger
-from core.normalize import filter_by_threshold, normalize_transaction
+from core.normalize import filter_by_threshold, filter_by_payment_status, normalize_transaction
 from core.parsing import parse_excel_file, validate_dataframe
 from core.schema import OffshoreRiskResponse
 from llm.classify import classify_batch, create_error_response
@@ -123,7 +123,12 @@ class TransactionService:
             
             # 2. Filter by threshold (now returns df without extra columns)
             df_filtered = filter_by_threshold(df)
-            logger.info(f"After filtering: {len(df_filtered)} transactions")
+            logger.info(f"After threshold filter: {len(df_filtered)} transactions")
+
+            # 2b. Filter by payment status (outgoing only)
+            if direction == "outgoing":
+                df_filtered = filter_by_payment_status(df_filtered)
+                logger.info(f"After status filter: {len(df_filtered)} transactions")
             
             if len(df_filtered) == 0:
                 logger.warning("No transactions meet the threshold criteria")

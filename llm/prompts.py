@@ -71,7 +71,23 @@ You MUST verify the **registered headquarters location** of every bank:
 
 **HQ ≠ Branch**: The branch address in transaction data is NOT the headquarters. You must search for where the bank is legally registered/headquartered.
 
-### D. Country Codes (MANDATORY - Check Against List)
+### D. Entity Headquarters (BEST EFFORT - Web Search Attempted)
+For **every** named company (counterparty AND our client, when company name is provided and marked with "→ SEARCH COMPANY HQ BY NAME"), you SHOULD attempt to search the internet for the company's **registered/official head office address** using the company name.
+- The address provided in the transaction field (if present) represents where the transaction was initiated from or the mailing address, which may differ from the actual headquarters.
+- Evaluate **both** independently:
+  - The address from the transaction field → check against offshore list
+  - The HQ address found via internet search → check against offshore list
+- If **either** is offshore → `OFFSHORE_YES`
+- If company name is not provided (e.g., individuals / "Физ" category), this step is skipped — no name to search.
+- If field address is empty but HQ is found → evaluate HQ only
+- If both are present and point to different jurisdictions → evaluate both independently
+
+**CRITICAL — Failed HQ Lookup Rule:**
+- If you cannot find the company's HQ (small/regional company, no public info), this is **NOT** grounds for `OFFSHORE_SUSPECT` on its own.
+- If the HQ search fails BUT all other available data (field addresses, bank addresses, bank HQ, country codes) clearly resolve to **non-offshore** jurisdictions → classify as `OFFSHORE_NO`.
+- Only use `OFFSHORE_SUSPECT` when there are **no resolvable addresses at all** (field address AND bank address AND country codes are all missing/empty), not merely because one company HQ lookup failed.
+
+### E. Country Codes (MANDATORY - Check Against List)
 You MUST check residence country codes and citizenship codes against the offshore list:
 - **Incoming**: Beneficiary Residence Country Code, Beneficiary Citizenship
 - **Outgoing**: Payer Residence Country Code, Payer Citizenship
@@ -92,6 +108,19 @@ You MUST check residence country codes and citizenship codes against the offshor
 
 ---
 
+## ADDRESS OBFUSCATION DETECTION
+
+Before parsing addresses, check for obfuscation patterns:
+
+**Obfuscation Indicators:**
+- Fake country prefixes (Cyrillic transliterations): KAZAHSTAN, SOEDINENNYE SHTATY AMERIKI, KITAI, ROSSIYA
+- Russian abbreviations in non-Russian addresses: UL (street), DOM (building), KV (apartment), KORP (block)
+- Filler patterns: repeated dashes "-, -, -", empty fields, "N/A"
+
+**When detected:** Strip fake prefixes, extract real location identifiers (building/street names, districts), verify via web search. Flag in reasoning with prefix "[ОБФУСКАЦИЯ]"
+
+---
+
 ## 3-STEP ANALYSIS PROCESS
 
 ### Step 1: EXTRACT & SEARCH
@@ -99,12 +128,9 @@ You MUST check residence country codes and citizenship codes against the offshor
 For each address, country code, and bank:
 
 1. **Parse addresses** into components: Street, City, State/Province, Country
+   - Check for obfuscation patterns first; if detected, extract real address before parsing
    - Don't confuse street names with locations: "HONG KONG EAST ROAD, QINGDAO" → City: Qingdao, China (NOT Hong Kong)
    - **Address independence**: If address text contradicts a separate country field, evaluate BOTH independently
-     - Example: Address says "TUEN MUN IND CTR HONG KONG" + Country field says "USA"
-     - Evaluate address: Hong Kong → offshore
-     - Evaluate country: USA → not offshore (no state specified)
-     - Result: OFFSHORE_YES (address is offshore)
 
 2. **Translate country codes** to full names and check against list
    - ISO 2-letter codes: HK, VG, KY, BM, etc.
@@ -114,8 +140,15 @@ For each address, country code, and bank:
 3. **Search for bank HQ locations**: Query "[Bank Name] headquarters location" or "[Bank Name] [SWIFT] head office"
    - Goal: Find the bank's **registered headquarters** city and country
    - Example: "Butterfield Bank" → HQ: Hamilton, Bermuda
+   - If obfuscation detected: cross-check extracted address via web search
 
-4. **For large countries (USA, UK, China, etc.)**: You MUST identify the specific **state/territory**
+4. **Search for entity HQ locations**: For every company marked with “→ SEARCH COMPANY HQ BY NAME”, query "[Company Name] headquarters location" or "[Company Name] head office address"
+   - Goal: Find the company’s **registered headquarters** city and country
+   - Compare the field address (if any) with the found HQ. Both are evaluated independently.
+   - If field address is empty but HQ is found → evaluate HQ only
+   - If both are present and point to different jurisdictions → evaluate both
+   - Example: "XYZ Ltd" → HQ found: Road Town, British Virgin Islands → OFFSHORE_YES   - **If HQ search fails**: Do NOT classify as SUSPECT solely because of this. If all other evidence (addresses, banks, country codes) is non-offshore → OFFSHORE_NO
+5. **For large countries (USA, UK, China, etc.)**: You MUST identify the specific **state/territory**
    - Example: "Sheridan, USA" → Search reveals: Sheridan, Wyoming, USA → Wyoming is offshore
 
 ### Step 2: COMPARE WITH LIST
@@ -125,14 +158,32 @@ Check if ANY resolved location (country OR state/territory) OR country code appe
 - The list contains names in Russian. Match by meaning, not spelling (e.g., "Bermuda" = "Бермудские острова")
 - Some states/territories are offshore even if the parent country is not: A Wyoming address triggers OFFSHORE_YES, but a California address does not
 - Country codes must be translated and matched: VG → Virgin Islands → Виргинские Острова (match)
+- Entity field address AND entity HQ address are both checked against the offshore list. If either is in an offshore jurisdiction → OFFSHORE_YES
+
+**Multi-Jurisdiction Handling:**
+- If Bank Country ≠ Recipient/Payer Address Location:
+  * Evaluate BOTH separately against offshore list
+  * If recipient/payer physical location is offshore → OFFSHORE_YES
+  * If only bank is offshore but recipient/payer is not → OFFSHORE_YES
+  * If EITHER is offshore → OFFSHORE_YES
+  
+**Examples:**
+- Recipient: Hong Kong (offshore) + Bank: China (not offshore) → OFFSHORE_YES
+- Recipient: Kazakhstan (not offshore) + Bank: British Virgin Islands (offshore) → OFFSHORE_YES
+- Recipient: USA (not offshore) + Bank: USA (not offshore) → OFFSHORE_NO
+
+**Reinforce Address Independence Rule:**
+Evaluate recipient/payer physical location separately from bank location. Both fields provide independent evidence of offshore involvement.
 
 ### Step 3: CLASSIFY
 
 | Condition | Label |
 |-----------|-------|
-| ANY address OR bank HQ OR country code is in offshore jurisdiction | **OFFSHORE_YES** |
-| ALL locations resolved AND none are offshore AND no country code matches | **OFFSHORE_NO** |
-| Missing/empty address OR search failed OR HQ lookup ambiguous | **OFFSHORE_SUSPECT** |
+| ANY address OR bank HQ OR entity HQ OR country code is in offshore jurisdiction | **OFFSHORE_YES** |
+| ALL resolvable locations are non-offshore AND no country code matches (even if entity HQ lookup failed) | **OFFSHORE_NO** |
+| Missing/empty address AND bank address AND country codes (no data to evaluate at all) OR bank HQ lookup ambiguous for a bank in a potentially offshore region | **OFFSHORE_SUSPECT** |
+
+**IMPORTANT**: A failed entity HQ search alone does NOT trigger OFFSHORE_SUSPECT. The SUSPECT label is reserved for cases where core location data (field addresses, bank data, country codes) is missing or unresolvable — not for cases where a company is simply too small or obscure to find online.
 
 ---
 
@@ -149,6 +200,23 @@ Check if ANY resolved location (country OR state/territory) OR country code appe
 | Residence Country Code: "HK" | HK → Hong Kong → Гонконг | OFFSHORE_YES (code matches list) |
 | Address: "TUEN MUN, HONG KONG" + Country: "USA" | Address → HK (offshore), Country → US (not offshore) | OFFSHORE_YES (address is offshore) |
 
+**OBFUSCATION EXAMPLES:**
+
+| Address | Resolution | Classification |
+|---------|------------|----------------|
+| "KAZAHSTAN, MONGKOK G, NATHAN ROAD UL, DOM 1318-19, KV 610" | Fake prefix "KAZAHSTAN" + RU abbreviations → Extract "NATHAN ROAD, MONGKOK" → Hong Kong | OFFSHORE_YES |
+| "SOEDINENNYE SHTATY AMERIKI, -, RM 20 UNIT B3, 07/FL TUEN MUNIND CTR NO 2 SAN PING CIRCUIT, -, -" | Fake prefix "SOEDINENNYE SHTATY AMERIKI" → Extract "TUEN MUN INDUSTRIAL CENTRE" → Hong Kong | OFFSHORE_YES |
+
+**ENTITY HQ EXAMPLES:**
+
+| Scenario | Resolution | Classification |
+|----------|------------|----------------|
+| Company with field address in Kazakhstan but HQ in British Virgin Islands | Field address: Kazakhstan (not offshore), HQ search: BVI (offshore) | OFFSHORE_YES |
+| Company name "XYZ Ltd" with no field address | Search finds HQ in Hong Kong | OFFSHORE_YES |
+| Company "ABC Corp" with field address in Hong Kong and HQ in London | Field address: HK (offshore), HQ: London (not offshore) | OFFSHORE_YES (field address is offshore) |
+| Small company "Kostanayzernokorm" — HQ not found online, field address Kazakhstan, bank in China (non-offshore) | HQ search fails, but all other data is non-offshore | OFFSHORE_NO (failed HQ lookup alone ≠ SUSPECT) |
+| Company "ORION GOLD KG" — HQ not found, payer address Kyrgyzstan, bank in Kyrgyzstan | HQ search fails, all other data non-offshore | OFFSHORE_NO |
+
 ---
 
 ## OUTPUT RULES
@@ -156,6 +224,9 @@ Check if ANY resolved location (country OR state/territory) OR country code appe
 1. **Strict list adherence**: Only use the Offshore Jurisdictions List above
 2. **Consistency**: Same entity across transactions = same reasoning
 3. **Language**: Write `reasoning_short_ru` in Russian (1-3 sentences summarizing the key finding)
+   - If obfuscation detected, prefix reasoning with "[ОБФУСКАЦИЯ]" and mention: fake prefix used, real address extracted, actual location
+   - Example: "[ОБФУСКАЦИЯ] Префикс 'KAZAHSTAN' скрывает реальный адрес: Nathan Road, Mongkok → Гонконг (офшор)"
+   - Must mention ALL jurisdictions evaluated (recipient location AND bank location if different)
 4. **Sources**: Include URLs from web_search in the `sources` array if you used web search to verify locations or bank headquarters
 """
     return prompt
@@ -243,7 +314,7 @@ def build_user_message(transactions: List[Dict[str, Any]]) -> str:
         
         if counterparty:
             label = "Payer Name" if direction == "incoming" else "Recipient Name"
-            txn_block.append(f"- {label}: {counterparty}")
+            txn_block.append(f"- {label}: {counterparty} → SEARCH COMPANY HQ BY NAME")
         
         if direction == "incoming" and payer_address_complete:
             txn_block.append(f"- Payer Address (Complete): {payer_address_complete}")
@@ -282,7 +353,7 @@ def build_user_message(transactions: List[Dict[str, Any]]) -> str:
 
         if client_category != "Физ" and client_name:
             label = "Beneficiary (Our Client)" if direction == "incoming" else "Payer (Our Client)"
-            txn_block.append(f"- {label}: {client_name}")
+            txn_block.append(f"- {label}: {client_name} → SEARCH COMPANY HQ BY NAME")
         
         bank_label = "Payer Bank" if direction == "incoming" else "Recipient Bank"
         bank_address_label = "Payer Bank Address (Complete)" if direction == "incoming" else "Recipient Bank Address (Complete)"

@@ -108,6 +108,47 @@ def filter_by_threshold(df: pd.DataFrame, threshold: Optional[float] = None) -> 
     return df_filtered
 
 
+def filter_by_payment_status(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Filter out outgoing transactions with rejected/deleted payment status.
+    Removes rows where 'Статус платежа' is 'Отказано в исполнении' or 'Удален'.
+
+    Args:
+        df: DataFrame with outgoing transactions
+
+    Returns:
+        Filtered DataFrame with rejected/deleted rows removed
+    """
+    column_name = "Статус платежа"
+
+    if column_name not in df.columns:
+        logger.warning(
+            f"Column '{column_name}' not found in DataFrame — "
+            "skipping payment status filter"
+        )
+        return df
+
+    excluded_statuses = {"отказано в исполнении", "удален"}
+
+    before_count = len(df)
+
+    normalized_status = df[column_name].apply(
+        lambda v: str(v).strip().lower() if pd.notna(v) else ""
+    )
+    mask = ~normalized_status.isin(excluded_statuses)
+
+    df_filtered = df[mask].copy()
+    after_count = len(df_filtered)
+    filtered_out = before_count - after_count
+
+    logger.info(
+        f"Payment status filter: {before_count} -> {after_count} "
+        f"(removed {filtered_out} with rejected/deleted status)"
+    )
+
+    return df_filtered
+
+
 def safe_get_value(row: pd.Series, key: str, default: Any = None) -> Any:
     """Safely get value from pandas Series."""
     value = row.get(key, default)
