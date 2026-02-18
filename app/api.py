@@ -3,7 +3,7 @@ FastAPI routes for file upload and processing.
 Clean API layer following separation of concerns principle.
 """
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
 
@@ -193,8 +193,8 @@ async def process_files(
             "job_id": job_id,
             "status": "queued",
             "message": "Files uploaded, starting processing...",
-            "created_at": datetime.utcnow().isoformat(),
-            "progress": 0
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "progress": 0,
         }
         
         # Start background processing

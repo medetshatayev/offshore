@@ -8,11 +8,14 @@ from pydantic import ValidationError
 
 from core.exceptions import LLMError
 from core.logger import setup_logger
-from core.schema import BatchOffshoreRiskResponse, OffshoreRiskResponse, Classification
-from llm.client import get_client, create_response_schema
+from core.schema import BatchOffshoreRiskResponse, Classification, OffshoreRiskResponse
+from llm.client import create_response_schema, get_client
 from llm.prompts import build_system_prompt, build_user_message
 
 logger = setup_logger(__name__)
+
+# Maximum retries for validation errors (malformed LLM responses)
+MAX_VALIDATION_RETRIES = 3
 
 
 def classify_batch(
@@ -45,16 +48,35 @@ def classify_batch(
         # Create response schema
         response_schema = create_response_schema()
         
-        # Call LLM
-        llm_response = client.call_with_structured_output(
-            system_prompt=system_prompt,
-            user_message=user_message,
-            response_schema=response_schema,
-            temperature=temperature,
-        )
+        # Retry loop for validation errors (malformed LLM responses)
+        batch_result = None
+        last_validation_error = None
         
-        # Validate response with pydantic
-        batch_result = BatchOffshoreRiskResponse(**llm_response)
+        for attempt in range(MAX_VALIDATION_RETRIES):
+            # Call LLM
+            llm_response = client.call_with_structured_output(
+                system_prompt=system_prompt,
+                user_message=user_message,
+                response_schema=response_schema,
+                temperature=temperature,
+            )
+            
+            # Validate response with pydantic
+            try:
+                batch_result = BatchOffshoreRiskResponse(**llm_response)
+                break  # Success - exit retry loop
+            except ValidationError as e:
+                last_validation_error = e
+                if attempt < MAX_VALIDATION_RETRIES - 1:
+                    logger.warning(
+                        f"Validation failed (attempt {attempt + 1}/{MAX_VALIDATION_RETRIES}), retrying: {e}"
+                    )
+                    continue
+                # Final attempt failed - will be handled below
+        
+        # If all retries failed, raise the last validation error
+        if batch_result is None:
+            raise last_validation_error
         
         # Map results back to original transactions to ensure order/completeness
         # Create a map of id -> response
@@ -71,6 +93,10 @@ def classify_batch(
                 # Set amount from local data since we removed it from LLM schema
                 result.amount_kzt = txn.get("amount_kzt", 0.0)
                 
+                # Set direction from local data if LLM didn't return it
+                if result.direction is None:
+                    result.direction = txn.get("direction", "incoming")
+                
                 final_results.append(result)
             else:
                 logger.warning(f"Transaction {txn_id} missing from LLM response, marking as error")
@@ -84,7 +110,7 @@ def classify_batch(
         return final_results
     
     except ValidationError as e:
-        logger.error(f"LLM batch response validation failed: {e}")
+        logger.error(f"LLM batch response validation failed after {MAX_VALIDATION_RETRIES} attempts: {e}")
         return [create_error_response(t, f"Validation error: {str(e)}") for t in transactions]
     
     except LLMError as e:

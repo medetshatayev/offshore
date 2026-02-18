@@ -2,15 +2,39 @@
 Pydantic schemas for request/response validation.
 Defines strict JSON schema for LLM structured output.
 """
-from typing import List, Literal, Optional
+from typing import Annotated, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, Field, field_validator
+
+
+def normalize_sources(v):
+    """Normalize sources field to handle None from LLM responses."""
+    if v is None:
+        return []
+    return v
+
+
+def normalize_transaction_id(v):
+    """Normalize transaction_id to string (LLM may return int)."""
+    if v is None:
+        return None
+    return str(v)
+
+
+def normalize_classification(v):
+    """Normalize classification field - handle string label or full object."""
+    if v is None:
+        return v
+    if isinstance(v, str):
+        # LLM returned just the label string, convert to full object with default confidence
+        return {"label": v, "confidence": 1.0}
+    return v
 
 
 class Classification(BaseModel):
     """LLM classification result."""
     label: Literal["OFFSHORE_YES", "OFFSHORE_SUSPECT", "OFFSHORE_NO"]
-    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score between 0 and 1")
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0, description="Confidence score between 0 and 1")
 
 
 class OffshoreRiskResponse(BaseModel):
@@ -18,17 +42,19 @@ class OffshoreRiskResponse(BaseModel):
     Structured output schema for LLM offshore risk assessment.
     This is the JSON format the LLM must return.
     """
-    transaction_id: Optional[str] = None
-    direction: Literal["incoming", "outgoing"]
+    transaction_id: Annotated[Optional[str], BeforeValidator(normalize_transaction_id)] = None
+    direction: Optional[Literal["incoming", "outgoing"]] = None
     amount_kzt: Optional[float] = Field(None, description="Transaction amount in KZT (added locally)")
-    classification: Classification = Field(..., description="Risk classification")
+    classification: Annotated[Classification, BeforeValidator(normalize_classification)] = Field(
+        ..., description="Risk classification"
+    )
     reasoning_short_ru: str = Field(
         ...,
         min_length=10,
-        max_length=500,
-        description="Brief reasoning in Russian (1-2 sentences)"
+        max_length=1000,
+        description="Brief reasoning in Russian (1-3 sentences)"
     )
-    sources: List[str] = Field(
+    sources: Annotated[List[str], BeforeValidator(normalize_sources)] = Field(
         default_factory=list,
         description="URLs from web_search if used, empty otherwise"
     )
@@ -70,13 +96,30 @@ class TransactionInput(BaseModel):
     city: Optional[str] = None
     payer: Optional[str] = None
     recipient: Optional[str] = None
+    recipient_address: Optional[str] = None
     bank_name: Optional[str] = None
     payer_bank: Optional[str] = None
     recipient_bank: Optional[str] = None
     payer_bank_address: Optional[str] = None
     recipient_bank_address: Optional[str] = None
+    bank_country: Optional[str] = None
     client_category: Optional[str] = None
     payment_details: Optional[str] = None
+    # New fields for incoming transactions
+    beneficiary_address: Optional[str] = None
+    beneficiary_bank_swift: Optional[str] = None
+    beneficiary_correspondent_swift: Optional[str] = None
+    payer_address: Optional[str] = None
+    payer_correspondent_swift: Optional[str] = None
+    payer_correspondent_name: Optional[str] = None
+    payer_correspondent_address: Optional[str] = None
+    intermediary_bank_1: Optional[str] = None
+    intermediary_bank_2: Optional[str] = None
+    intermediary_bank_3: Optional[str] = None
+    # Actual payer/recipient address fields (beneficial owners)
+    actual_payer_address: Optional[str] = None
+    actual_payer_residence_country: Optional[str] = None
+    actual_recipient_address: Optional[str] = None
 
 
 # Label translations for output

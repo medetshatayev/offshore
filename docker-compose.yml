@@ -9,5 +9,5 @@ services:
       - .env
     volumes:
       - ./data:/app/data:ro
-      - ./files:/app/files
+      - /home/dladmin/offshore/files:/app/files
     restart: unless-stopped

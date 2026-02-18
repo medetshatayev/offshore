@@ -3,61 +3,90 @@ Excel file parsing with Cyrillic header support.
 Handles both incoming and outgoing transaction formats.
 """
 from pathlib import Path
-from typing import Any, Dict, Literal
+from typing import Any, Dict, Literal, Set
 
 import pandas as pd
 
-from core.config import get_settings
-from core.exceptions import ParsingError, DataNotFoundError
+from core.exceptions import DataNotFoundError, ParsingError
 from core.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-# Column mapping for incoming transactions
-INCOMING_COLUMNS = {
-    "№п/п": "id",
-    "Наименование бенефициара (наш клиент)": "beneficiary_name",
-    "Категория клиента": "client_category",
-    "Страна резидентства": "country_residence",
-    "Гражданство": "citizenship",
-    "Номер счета бенефициара": "beneficiary_account",
-    "Дата валютирования": "value_date",
-    "Дата приема": "acceptance_date",
-    "Сумма": "amount",
-    "Сумма в тенге": "amount_kzt",
-    "Валюта платежа": "currency",
-    "Плательщик": "payer",
-    "SWIFT Банка плательщика": "payer_bank_swift",
-    "Город": "city",
-    "Банк плательщика": "payer_bank",
-    "Адрес банка плательщика": "payer_bank_address",
-    "Состояние": "status",
-    "Код страны": "country_code",
-    "Страна отправителя": "payer_country"
+# Expected columns for incoming transactions (Cyrillic headers)
+INCOMING_COLUMNS: Set[str] = {
+    "№п/п",
+    "Наименование бенефициара (наш клиент)",
+    "ИИН/БИН бенефициара",
+    "Категория клиента",
+    "Страна резидентства бенефициара",
+    "Гражданство",
+    "Адрес бенефициара",
+    "Номер счета бенефициара",
+    "SWIFT код Банка бенефициара",
+    "SWIFT код кор.банка бенефициара (Отправитель сообщения)",
+    "Дата валютирования",
+    "Дата документа",
+    "Сумма",
+    "Сумма в тенге",
+    "Валюта платежа",
+    "КНП платежа",
+    "Плательщик (Наименование)",
+    "Страна резиденства плательщика",
+    "Счет плательщика",
+    "Адрес плательщика",
+    "SWIFT код Банка плательщика",
+    "Наименование Банка плательщика",
+    "Страна банка плательщика",
+    "Код страны банка плательщика",
+    "Город банка плательщика",
+    "Адрес банка плательщика",
+    "SWIFT код Корреспондента Банка Плательщика(отправителя)",
+    "Наименование Корреспондента Банка Плательщика(отправителя)",
+    "Адрес Корреспондента Банка Плательщика(отправителя)",
+    "Банк-посредник отправителя 1",
+    "Банк-посредник отправителя 2",
+    "Банк-посредник отправителя 3",
+    "Назначение платежа",
+    "Состояние",
+    "Референс сообщения",
+    "Признак по отправителю \"Оффшорная\" (Да/нет)",
+    "Номер документа",
+    "Адрес фактического плательщика",
+    "Адрес фактического получателя",
+    "Страна резиденства фактического плательщика",
+    "Фактический плательщик (наименование)",
+    "Фактический получатель",
 }
 
-# Column mapping for outgoing transactions
-OUTGOING_COLUMNS = {
-    "№п/п": "id",
-    "Наименование плательщика (наш клиент)": "beneficiary_name",
-    "Категория клиента": "client_category",
-    "Страна резидентства": "country_residence",
-    "Гражданство": "citizenship",
-    "Номер счета плательщика": "beneficiary_account",
-    "Дата валютирования": "value_date",
-    "Дата приема": "acceptance_date",
-    "Сумма": "amount",
-    "Сумма в тенге": "amount_kzt",
-    "Валюта платежа": "currency",
-    "Получатель": "recipient",
-    "SWIFT Банка получателя": "recipient_bank_swift",
-    "Город": "city",
-    "Банк получателя": "recipient_bank",
-    "Адрес банка получателя": "recipient_bank_address",
-    "Детали платежа": "payment_details",
-    "Состояние": "status",
-    "Код страны": "country_code",
-    "Страна получателя": "recipient_country"
+# Expected columns for outgoing transactions (Cyrillic headers)
+OUTGOING_COLUMNS: Set[str] = {
+    "№ п/п",
+    "Тип документа",
+    "Наименование плательщика (наш клиент)",
+    "БИН плательщика",
+    "Категория клиента",
+    "Страна резидентства плательщика",
+    "Гражданство",
+    "Номер счета плательщика",
+    "Дата приема",
+    "Дата валютирования",
+    "Сумма",
+    "Сумма в тенге",
+    "Валюта платежа",
+    "КНП",
+    "Получатель",
+    "Адрес получателя",
+    "Страна получателя",
+    "Код страны получателя",
+    "Наименование Банка получателя",
+    "SWIFT Банка получателя",
+    "Адрес банка получателя",
+    "Страна банка",
+    "Город банка",
+    "Назначение платежа",
+    "Состояние платежа",
+    "Референс платежа",
+    "Статус платежа",
 }
 
 
@@ -87,18 +116,32 @@ def parse_excel_file(
         )
     
     # Determine skiprows and engine based on direction and file extension
-    skiprows = 4 if direction == "incoming" else 5
+    # Both directions: Skip rows 0-4 (first 5 rows) and row 6 (column numbers in row 7)
+    # Headers are at row 6 (A6), data starts at row 8
+    skiprows = [0, 1, 2, 3, 4, 6]
     engine = "xlrd" if path.suffix.lower() == ".xls" else "openpyxl"
+    
+    # Define dtype for BIN/ИИН columns to preserve leading zeros
+    dtype_spec = {
+        "ИИН/БИН бенефициара": str
+    } if direction == "incoming" else {
+        "БИН плательщика": str
+    }
     
     logger.info(f"Parsing {direction} transactions from {path.name} (skiprows={skiprows}, engine={engine})")
     
     try:
-        # Read with appropriate engine
+        # Read with appropriate engine and dtype to preserve BIN leading zeros
         df = pd.read_excel(
             file_path,
             skiprows=skiprows,
-            engine=engine
+            engine=engine,
+            dtype=dtype_spec
         )
+        
+        # Normalize column names: strip whitespace and replace multiple spaces with single space
+        import re
+        df.columns = [re.sub(r'\s+', ' ', str(col).strip()) for col in df.columns]
         
         # Remove completely empty rows
         df = df.dropna(how="all")
@@ -114,7 +157,7 @@ def parse_excel_file(
         
         # Validate expected columns exist
         expected_columns = INCOMING_COLUMNS if direction == "incoming" else OUTGOING_COLUMNS
-        missing_cols = set(expected_columns.keys()) - set(df.columns)
+        missing_cols = expected_columns - set(df.columns)
         
         if missing_cols:
             logger.warning(f"Missing expected columns: {missing_cols}")
@@ -148,14 +191,15 @@ def validate_dataframe(
         Dictionary with validation results and statistics
     """
     expected_columns = INCOMING_COLUMNS if direction == "incoming" else OUTGOING_COLUMNS
+    df_columns = set(df.columns)
     
     stats = {
         "total_rows": len(df),
         "columns_found": len(df.columns),
         "columns_expected": len(expected_columns),
-        "missing_columns": list(set(expected_columns.keys()) - set(df.columns)),
-        "extra_columns": list(set(df.columns) - set(expected_columns.keys())),
-        "empty_amount_kzt": int(df["Сумма в тенге"].isna().sum()) if "Сумма в тенге" in df.columns else 0
+        "missing_columns": sorted(expected_columns - df_columns),
+        "extra_columns": sorted(df_columns - expected_columns),
+        "empty_amount_kzt": int(df["Сумма в тенге"].isna().sum()) if "Сумма в тенге" in df.columns else 0,
     }
     
     logger.info(f"Validation stats for {direction}: {stats}")

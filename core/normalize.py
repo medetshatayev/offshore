@@ -97,15 +97,6 @@ def filter_by_threshold(df: pd.DataFrame, threshold: Optional[float] = None) -> 
     mask = amounts.notna() & (amounts >= threshold)
     
     df_filtered = df[mask].copy()
-    
-    # We can optionally attach the normalized amount if needed for LLM context,
-    # but the user requested removing it from output.
-    # We'll add it temporarily to the normalized dicts later, but not to the DF used for export.
-    # If we need it for `normalize_transaction` later, we can re-calculate or extract it there.
-    # Actually, `normalize_transaction` uses `amount_kzt_normalized`. 
-    # Let's pass the normalized amount differently or re-calculate it in `normalize_transaction`.
-    # Re-calculating is cheap.
-    
     after_count = len(df_filtered)
     filtered_out = before_count - after_count
     
@@ -114,6 +105,47 @@ def filter_by_threshold(df: pd.DataFrame, threshold: Optional[float] = None) -> 
         f"(removed {filtered_out} below {threshold:,.0f} KZT)"
     )
     
+    return df_filtered
+
+
+def filter_by_payment_status(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Filter out outgoing transactions with rejected/deleted payment status.
+    Removes rows where 'Статус платежа' is 'Отказано в исполнении' or 'Удален'.
+
+    Args:
+        df: DataFrame with outgoing transactions
+
+    Returns:
+        Filtered DataFrame with rejected/deleted rows removed
+    """
+    column_name = "Статус платежа"
+
+    if column_name not in df.columns:
+        logger.warning(
+            f"Column '{column_name}' not found in DataFrame — "
+            "skipping payment status filter"
+        )
+        return df
+
+    excluded_statuses = {"отказано в исполнении", "удален"}
+
+    before_count = len(df)
+
+    normalized_status = df[column_name].apply(
+        lambda v: str(v).strip().lower() if pd.notna(v) else ""
+    )
+    mask = ~normalized_status.isin(excluded_statuses)
+
+    df_filtered = df[mask].copy()
+    after_count = len(df_filtered)
+    filtered_out = before_count - after_count
+
+    logger.info(
+        f"Payment status filter: {before_count} -> {after_count} "
+        f"(removed {filtered_out} with rejected/deleted status)"
+    )
+
     return df_filtered
 
 
@@ -150,18 +182,18 @@ def normalize_transaction(row: pd.Series, direction: str) -> Dict[str, Any]:
     
     # Common fields
     normalized = {
-        "id": safe_get_string(row, "№п/п", "unknown"),
+        "id": safe_get_string(row, "№ п/п" if direction == "outgoing" else "№п/п", "unknown"),
         "direction": direction,
         "amount_kzt": amount_kzt,
         "amount": safe_get_value(row, "Сумма"),
         "currency": safe_get_string(row, "Валюта платежа"),
         "value_date": safe_get_string(row, "Дата валютирования"),
-        "acceptance_date": safe_get_string(row, "Дата приема"),
-        "country_residence": safe_get_string(row, "Страна резидентства"),
+        "acceptance_date": safe_get_string(row, "Дата документа" if direction == "incoming" else "Дата приема"),
+        "country_residence": safe_get_string(row, "Страна резидентства бенефициара" if direction == "incoming" else "Страна резидентства плательщика"),
         "citizenship": safe_get_string(row, "Гражданство"),
-        "city": safe_get_string(row, "Город"),
-        "country_code": safe_get_string(row, "Код страны"),
-        "status": safe_get_string(row, "Состояние"),
+        "city": safe_get_string(row, "Город банка плательщика" if direction == "incoming" else "Город банка"),
+        "country_code": safe_get_string(row, "Код страны банка плательщика" if direction == "incoming" else "Код страны получателя"),
+        "status": safe_get_string(row, "Состояние" if direction == "incoming" else "Состояние платежа"),
     }
     
     # Direction-specific fields
@@ -169,23 +201,41 @@ def normalize_transaction(row: pd.Series, direction: str) -> Dict[str, Any]:
         normalized.update({
             "beneficiary_name": safe_get_string(row, "Наименование бенефициара (наш клиент)"),
             "beneficiary_account": safe_get_string(row, "Номер счета бенефициара"),
-            "payer": safe_get_string(row, "Плательщик"),
-            "payer_bank": safe_get_string(row, "Банк плательщика"),
-            "payer_bank_swift": safe_get_string(row, "SWIFT Банка плательщика"),
+            "beneficiary_address": safe_get_string(row, "Адрес бенефициара"),
+            "beneficiary_bank_swift": safe_get_string(row, "SWIFT код Банка бенефициара"),
+            "beneficiary_correspondent_swift": safe_get_string(row, "SWIFT код кор.банка бенефициара (Отправитель сообщения)"),
+            "payer": safe_get_string(row, "Плательщик (Наименование)"),
+            "payer_address": safe_get_string(row, "Адрес плательщика"),
+            "payer_country": safe_get_string(row, "Страна резиденства плательщика"),
+            "payer_bank": safe_get_string(row, "Наименование Банка плательщика"),
+            "payer_bank_swift": safe_get_string(row, "SWIFT код Банка плательщика"),
             "payer_bank_address": safe_get_string(row, "Адрес банка плательщика"),
+            "bank_country": safe_get_string(row, "Страна банка плательщика"),
+            "payer_correspondent_swift": safe_get_string(row, "SWIFT код Корреспондента Банка Плательщика(отправителя)"),
+            "payer_correspondent_name": safe_get_string(row, "Наименование Корреспондента Банка Плательщика(отправителя)"),
+            "payer_correspondent_address": safe_get_string(row, "Адрес Корреспондента Банка Плательщика(отправителя)"),
+            "intermediary_bank_1": safe_get_string(row, "Банк-посредник отправителя 1"),
+            "intermediary_bank_2": safe_get_string(row, "Банк-посредник отправителя 2"),
+            "intermediary_bank_3": safe_get_string(row, "Банк-посредник отправителя 3"),
+            "payment_details": safe_get_string(row, "Назначение платежа"),
             "client_category": safe_get_string(row, "Категория клиента"),
-            "payer_country": safe_get_string(row, "Страна отправителя")
+            # Actual payer/recipient address fields (beneficial owners)
+            "actual_payer_address": safe_get_string(row, "Адрес фактического плательщика"),
+            "actual_payer_residence_country": safe_get_string(row, "Страна резиденства фактического плательщика"),
+            "actual_recipient_address": safe_get_string(row, "Адрес фактического получателя"),
         })
-        normalized["swift_code"] = safe_get_string(row, "SWIFT Банка плательщика")
+        normalized["swift_code"] = safe_get_string(row, "SWIFT код Банка плательщика")
     else:  # outgoing
         normalized.update({
             "payer_name": safe_get_string(row, "Наименование плательщика (наш клиент)"),
             "payer_account": safe_get_string(row, "Номер счета плательщика"),
             "recipient": safe_get_string(row, "Получатель"),
-            "recipient_bank": safe_get_string(row, "Банк получателя"),
+            "recipient_address": safe_get_string(row, "Адрес получателя"),
+            "recipient_bank": safe_get_string(row, "Наименование Банка получателя"),
             "recipient_bank_swift": safe_get_string(row, "SWIFT Банка получателя"),
             "recipient_bank_address": safe_get_string(row, "Адрес банка получателя"),
-            "payment_details": safe_get_string(row, "Детали платежа"),
+            "bank_country": safe_get_string(row, "Страна банка"),
+            "payment_details": safe_get_string(row, "Назначение платежа"),
             "client_category": safe_get_string(row, "Категория клиента"),
             "recipient_country": safe_get_string(row, "Страна получателя")
         })
