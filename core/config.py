@@ -90,7 +90,4 @@ def get_settings() -> Settings:
     return _settings
 
 
-def reset_settings() -> None:
-    """Reset settings singleton (useful for testing)."""
-    global _settings
-    _settings = None
+

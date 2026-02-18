@@ -382,11 +382,7 @@ def build_user_message(transactions: List[Dict[str, Any]]) -> str:
             if intermediary_bank_3:
                 txn_block.append(f"- Intermediary Bank 3: {intermediary_bank_3} → VERIFY HQ LOCATION")
         
-        # Add payment details for both directions
-        if direction == "incoming" and payment_details:
-            txn_block.append(f"- Payment Details: {payment_details}")
-        
-        if direction == "outgoing" and payment_details:
+        if payment_details:
             txn_block.append(f"- Payment Details: {payment_details}")
             
         message_parts.append("\n".join(txn_block))

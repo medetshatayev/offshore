@@ -8,16 +8,6 @@ import sys
 from typing import Optional
 
 
-def redact_account_number(account: Optional[str]) -> str:
-    """Redact account number, showing only last 4 digits."""
-    if not account or not isinstance(account, str):
-        return "****"
-    account_str = str(account).strip()
-    if len(account_str) <= 4:
-        return "****"
-    return f"****{account_str[-4:]}"
-
-
 def setup_logger(name: str, level: Optional[str] = None) -> logging.Logger:
     """
     Configure and return a logger instance.

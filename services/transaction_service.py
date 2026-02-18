@@ -5,7 +5,7 @@ Encapsulates business logic for processing transactions through
 the offshore risk detection pipeline.
 """
 import asyncio
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
 from core.config import get_settings
 from core.exceptions import FileProcessingError
@@ -53,7 +53,7 @@ class TransactionService:
         
         async def process_chunk(chunk: List[Dict[str, Any]]) -> List[OffshoreRiskResponse]:
             async with semaphore:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 # Run sync LLM call in executor
                 results = await loop.run_in_executor(None, classify_batch, chunk)
                 
@@ -183,25 +183,4 @@ class TransactionService:
                 details={"file_path": file_path, "error": str(e)}
             )
     
-    async def process_files(
-        self,
-        incoming_path: str,
-        outgoing_path: str
-    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """
-        Process both incoming and outgoing files.
-        
-        Args:
-            incoming_path: Path to incoming transactions file
-            outgoing_path: Path to outgoing transactions file
-        
-        Returns:
-            Tuple of (incoming_result, outgoing_result)
-        """
-        # Process incoming file
-        incoming_result = await self.process_file(incoming_path, "incoming")
-        
-        # Process outgoing file
-        outgoing_result = await self.process_file(outgoing_path, "outgoing")
-        
-        return incoming_result, outgoing_result
+

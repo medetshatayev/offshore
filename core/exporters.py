@@ -128,10 +128,10 @@ def export_to_excel(
             # Auto-fit other columns (approximate)
             for idx, col in enumerate(output_df.columns[:-1]):  # Exclude last (Результат)
                 if col not in bin_columns:  # Skip BIN columns (already formatted)
-                    max_len = max(
-                        output_df[col].astype(str).map(len).max(),
-                        len(str(col))
-                    )
+                    col_max = output_df[col].astype(str).map(len).max()
+                    if pd.isna(col_max):
+                        col_max = 0
+                    max_len = max(int(col_max), len(str(col)))
                     worksheet.set_column(idx, idx, min(max_len + 2, 50))
         
         logger.info(f"Successfully exported to {output_path}")

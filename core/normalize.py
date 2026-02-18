@@ -2,8 +2,7 @@
 Data normalization and metadata enrichment.
 Handles currency conversion, amount cleaning, and transaction metadata.
 """
-from datetime import datetime
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import pandas as pd
 
@@ -84,7 +83,8 @@ def filter_by_threshold(df: pd.DataFrame, threshold: Optional[float] = None) -> 
             details={"available_columns": list(df.columns)}
         )
     
-    threshold = threshold or settings.amount_threshold_kzt
+    if threshold is None:
+        threshold = settings.amount_threshold_kzt
     
     # Calculate normalized amounts temporarily
     amounts = df["Сумма в тенге"].apply(clean_amount_kzt)

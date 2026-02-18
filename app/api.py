@@ -136,14 +136,14 @@ def validate_file_extension(filename: str) -> None:
     Raises:
         HTTPException: If file extension is invalid
     """
-    if not filename.endswith(('.xlsx', '.xls')):
+    if not filename or not filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(
             status_code=400,
             detail=f"Invalid file type: {filename}. Only .xlsx and .xls are supported."
         )
 
 
-@app.post("/process")
+@app.post("/process", status_code=202)
 async def process_files(
     background_tasks: BackgroundTasks,
     incoming_file: UploadFile = File(...),

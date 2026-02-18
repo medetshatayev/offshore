@@ -82,46 +82,6 @@ class BatchOffshoreRiskResponse(BaseModel):
     results: List[OffshoreRiskResponse] = Field(..., description="List of classification results")
 
 
-class TransactionInput(BaseModel):
-    """Input transaction for LLM classification."""
-    id: Optional[str] = None
-    direction: Literal["incoming", "outgoing"]
-    amount_kzt: float
-    currency: Optional[str] = None
-    swift_code: Optional[str] = None
-    country_residence: Optional[str] = None
-    country_code: Optional[str] = None
-    recipient_country: Optional[str] = None
-    payer_country: Optional[str] = None
-    city: Optional[str] = None
-    payer: Optional[str] = None
-    recipient: Optional[str] = None
-    recipient_address: Optional[str] = None
-    bank_name: Optional[str] = None
-    payer_bank: Optional[str] = None
-    recipient_bank: Optional[str] = None
-    payer_bank_address: Optional[str] = None
-    recipient_bank_address: Optional[str] = None
-    bank_country: Optional[str] = None
-    client_category: Optional[str] = None
-    payment_details: Optional[str] = None
-    # New fields for incoming transactions
-    beneficiary_address: Optional[str] = None
-    beneficiary_bank_swift: Optional[str] = None
-    beneficiary_correspondent_swift: Optional[str] = None
-    payer_address: Optional[str] = None
-    payer_correspondent_swift: Optional[str] = None
-    payer_correspondent_name: Optional[str] = None
-    payer_correspondent_address: Optional[str] = None
-    intermediary_bank_1: Optional[str] = None
-    intermediary_bank_2: Optional[str] = None
-    intermediary_bank_3: Optional[str] = None
-    # Actual payer/recipient address fields (beneficial owners)
-    actual_payer_address: Optional[str] = None
-    actual_payer_residence_country: Optional[str] = None
-    actual_recipient_address: Optional[str] = None
-
-
 # Label translations for output
 LABEL_TRANSLATIONS = {
     "OFFSHORE_YES": "ОФШОР: ДА",

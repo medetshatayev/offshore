@@ -278,9 +278,21 @@ def create_response_schema() -> Dict[str, Any]:
                             "description": "Transaction identifier"
                         },
                         "classification": {
-                            "type": "string",
-                            "enum": ["OFFSHORE_YES", "OFFSHORE_SUSPECT", "OFFSHORE_NO"],
-                            "description": "Offshore risk classification"
+                            "type": "object",
+                            "properties": {
+                                "label": {
+                                    "type": "string",
+                                    "enum": ["OFFSHORE_YES", "OFFSHORE_SUSPECT", "OFFSHORE_NO"],
+                                    "description": "Offshore risk classification label"
+                                },
+                                "confidence": {
+                                    "type": "number",
+                                    "description": "Confidence score between 0.0 and 1.0"
+                                }
+                            },
+                            "required": ["label", "confidence"],
+                            "additionalProperties": False,
+                            "description": "Offshore risk classification with confidence"
                         },
                         "reasoning_short_ru": {
                             "type": "string",
