@@ -20,6 +20,6 @@ COPY . .
 # Create storage directory
 RUN mkdir -p /app/files
 
-EXPOSE 8000
+EXPOSE 8008
 
 CMD ["python", "main.py"]

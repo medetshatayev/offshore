@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Offshore Transaction Risk Detection</title>
+    <script>const BASE_PATH = "{{ base_path }}";</script>
     <style>
         * {
             margin: 0;
@@ -292,7 +293,7 @@
         
         async function checkAndResumeJob(jobId) {
             try {
-                const response = await fetch(`/status/${jobId}`);
+                const response = await fetch(`${BASE_PATH}/status/${jobId}`);
                 if (!response.ok) {
                     // Job not found, clear it
                     localStorage.removeItem('currentJobId');
@@ -338,7 +339,7 @@
             
             try {
                 // Submit files
-                const response = await fetch('/process', {
+                const response = await fetch(`${BASE_PATH}/process`, {
                     method: 'POST',
                     body: formData
                 });
@@ -389,7 +390,7 @@
             
             statusCheckInterval = setInterval(async () => {
                 try {
-                    const response = await fetch(`/status/${jobId}`);
+                    const response = await fetch(`${BASE_PATH}/status/${jobId}`);
                     
                     if (!response.ok) {
                         throw new Error('Failed to check status');
@@ -453,7 +454,7 @@
                 incomingDiv.style.display = 'block';
                 
                 const downloadLink = document.getElementById('incomingDownload');
-                downloadLink.href = `/download/${data.incoming.filename}`;
+                downloadLink.href = `${BASE_PATH}/download/${data.incoming.filename}`;
                 
                 const statsDiv = document.getElementById('incomingStats');
                 statsDiv.innerHTML = formatStats(data.incoming.stats);
@@ -465,7 +466,7 @@
                 outgoingDiv.style.display = 'block';
                 
                 const downloadLink = document.getElementById('outgoingDownload');
-                downloadLink.href = `/download/${data.outgoing.filename}`;
+                downloadLink.href = `${BASE_PATH}/download/${data.outgoing.filename}`;
                 
                 const statsDiv = document.getElementById('outgoingStats');
                 statsDiv.innerHTML = formatStats(data.outgoing.stats);

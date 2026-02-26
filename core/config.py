@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     host: str = Field(default="0.0.0.0", alias="HOST")
     port: int = Field(default=8000)
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    root_path: str = Field(default="/offshore", alias="ROOT_PATH")
     
     # OpenAI
     openai_api_key: str = Field(..., alias="OPENAI_API_KEY")

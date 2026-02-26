@@ -23,7 +23,8 @@ settings = get_settings()
 app = FastAPI(
     title="Offshore Transaction Risk Detection",
     description="Detect offshore jurisdiction involvement in banking transactions",
-    version="1.0.0"
+    version="1.0.0",
+    root_path=settings.root_path,
 )
 
 # Setup templates
@@ -40,7 +41,10 @@ transaction_service = TransactionService()
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     """Render upload form."""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse("index.html", {
+        "request": request,
+        "base_path": settings.root_path.rstrip("/"),
+    })
 
 
 @app.get("/health")

@@ -37,6 +37,7 @@ def main():
         from app.api import app
         
         logger.info("Starting Offshore Risk Detection Service")
+        logger.info(f"Root Path: {settings.root_path}")
         logger.info(f"OpenAI Model: {settings.openai_model}")
         logger.info(f"Log Level: {settings.log_level}")
         logger.info(f"Amount Threshold: {settings.amount_threshold_kzt:,.0f} KZT")
