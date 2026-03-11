@@ -5,24 +5,10 @@ This module initializes the application, loads configuration,
 and starts the FastAPI server.
 """
 import sys
-from pathlib import Path
-
-# Add project root to Python path for module imports
-PROJECT_ROOT = Path(__file__).parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
-from dotenv import load_dotenv
 
 from core.config import get_settings
 from core.exceptions import ConfigurationError
 from core.logger import setup_logger
-
-# Load environment variables from .env file
-_env_file = PROJECT_ROOT / ".env"
-if _env_file.exists():
-    load_dotenv(_env_file)
-else:
-    print("Warning: .env file not found. Using environment variables or defaults.")
 
 logger = setup_logger(__name__)
 

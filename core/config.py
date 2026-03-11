@@ -5,7 +5,7 @@ All environment variables and settings are defined here.
 from pathlib import Path
 from typing import Optional
 
-from pydantic import Field, field_validator, ConfigDict
+from pydantic import AliasChoices, ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -21,24 +21,45 @@ class Settings(BaseSettings):
     
     # Application
     app_name: str = Field(default="Offshore Risk Detection Service", alias="APP_NAME")
-    host: str = Field(default="0.0.0.0", alias="HOST")
-    port: int = Field(default=8000)
-    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
-    root_path: str = Field(default="/offshore", alias="ROOT_PATH")
+    host: str = Field(..., alias="HOST")
+    port: int = Field(..., alias="PORT")
+    log_level: str = Field(..., alias="LOG_LEVEL")
+    root_path: str = Field(..., alias="ROOT_PATH")
     
     # OpenAI
     openai_api_key: str = Field(..., alias="OPENAI_API_KEY")
-    openai_gateway_url: str = Field(..., alias="OPENAI_GATEWAY_URL")
-    openai_model: str = Field(default="gpt-4.1", alias="OPENAI_MODEL")
-    openai_timeout: int = Field(default=60, alias="OPENAI_TIMEOUT")
+    openai_responses_url: str = Field(
+        default="https://api.openai.com/v1/responses",
+        validation_alias=AliasChoices("OPENAI_RESPONSES_URL", "OPENAI_GATEWAY_URL"),
+    )
+    openai_model: str = Field(..., alias="OPENAI_MODEL")
+    openai_timeout: int = Field(..., alias="OPENAI_TIMEOUT")
     
     # Processing
-    amount_threshold_kzt: float = Field(default=5000000.0, alias="AMOUNT_THRESHOLD_KZT")
-    max_concurrent_llm_calls: int = Field(default=5, alias="MAX_CONCURRENT_LLM_CALLS")
+    amount_threshold_kzt: float = Field(..., alias="AMOUNT_THRESHOLD_KZT")
+    max_concurrent_llm_calls: int = Field(..., alias="MAX_CONCURRENT_LLM_CALLS")
+    batch_size: int = Field(default=10, alias="BATCH_SIZE")
     
     # Storage
-    temp_storage_path: str = Field(default="files", alias="STORAGE_PATH")
+    temp_storage_path: str = Field(..., alias="STORAGE_PATH")
     database_path: str = Field(default="offshore.db", alias="DATABASE_PATH")
+    
+    # PostgreSQL
+    postgres_host: str = Field(..., alias="POSTGRES_HOST")
+    postgres_port: int = Field(..., alias="POSTGRES_PORT")
+    postgres_db: str = Field(..., alias="POSTGRES_DB")
+    postgres_user: str = Field(..., alias="POSTGRES_USER")
+    postgres_password: str = Field(..., alias="POSTGRES_PASSWORD")
+    postgres_min_pool: int = Field(default=2, alias="POSTGRES_MIN_POOL")
+    postgres_max_pool: int = Field(default=10, alias="POSTGRES_MAX_POOL")
+    
+    @property
+    def postgres_dsn(self) -> str:
+        """Build PostgreSQL DSN from components."""
+        return (
+            f"postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
     
     @field_validator("log_level")
     @classmethod
@@ -67,6 +88,14 @@ class Settings(BaseSettings):
         if v > 50:
             raise ValueError("Max concurrent LLM calls should not exceed 50")
         return v
+
+    @field_validator("batch_size")
+    @classmethod
+    def validate_batch_size(cls, v: int) -> int:
+        """Validate batch size is within safe limits (1-20)."""
+        if not (1 <= v <= 20):
+            raise ValueError("Batch size must be between 1 and 20")
+        return v
         
     def ensure_directories(self) -> None:
         """Ensure required directories exist."""
@@ -89,6 +118,5 @@ def get_settings() -> Settings:
         _settings = Settings()
         _settings.ensure_directories()
     return _settings
-
 
 

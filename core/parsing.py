@@ -2,6 +2,7 @@
 Excel file parsing with Cyrillic header support.
 Handles both incoming and outgoing transaction formats.
 """
+import re
 from pathlib import Path
 from typing import Any, Dict, Literal, Set
 
@@ -140,7 +141,6 @@ def parse_excel_file(
         )
         
         # Normalize column names: strip whitespace and replace multiple spaces with single space
-        import re
         df.columns = [re.sub(r'\s+', ' ', str(col).strip()) for col in df.columns]
         
         # Remove completely empty rows

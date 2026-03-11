@@ -2,10 +2,14 @@
 FastAPI routes for file upload and processing.
 Clean API layer following separation of concerns principle.
 """
+import asyncio
 import uuid
+from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response
@@ -14,10 +18,30 @@ from fastapi.templating import Jinja2Templates
 from core.config import get_settings
 from core.exceptions import FileProcessingError
 from core.logger import setup_logger
+from core.pg import close_pg_pool, init_pg_pool, init_transaction_logs_table
+from llm.client import close_client
 from services.transaction_service import TransactionService
 
 logger = setup_logger(__name__)
 settings = get_settings()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Application lifespan: initialize and clean up resources."""
+    # Startup
+    try:
+        await init_pg_pool()
+        await init_transaction_logs_table()
+        logger.info("PostgreSQL transaction logging initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize PostgreSQL: {e}", exc_info=True)
+        logger.warning("Application will continue without transaction logging")
+    yield
+    # Shutdown
+    await close_pg_pool()
+    close_client()
+
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -25,6 +49,7 @@ app = FastAPI(
     description="Detect offshore jurisdiction involvement in banking transactions",
     version="1.0.0",
     root_path=settings.root_path,
+    lifespan=lifespan,
 )
 
 # Setup templates
@@ -39,7 +64,7 @@ transaction_service = TransactionService()
 
 
 @app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
+async def index(request: Request) -> HTMLResponse:
     """Render upload form."""
     return templates.TemplateResponse("index.html", {
         "request": request,
@@ -48,7 +73,7 @@ async def index(request: Request):
 
 
 @app.get("/health")
-async def health_check():
+async def health_check() -> Dict[str, str]:
     """Health check endpoint."""
     return {
         "status": "healthy",
@@ -58,9 +83,30 @@ async def health_check():
 
 
 @app.get("/favicon.ico")
-async def favicon():
+async def favicon() -> Response:
     """Return empty response for favicon to avoid 404 errors."""
     return Response(status_code=204)
+
+
+def _extract_original_filename(stored_path: Path) -> str:
+    """Extract original filename from the stored path (strip job ID prefix)."""
+    name = stored_path.name
+    return name.split("_", 2)[-1] if "_" in name else name
+
+
+def _build_direction_result(
+    result: Any, failed: bool
+) -> Dict[str, Any]:
+    """Build the result dict for a single direction (incoming/outgoing)."""
+    return {
+        "filename": (
+            Path(result["output_path"]).name
+            if not failed and isinstance(result, dict) and result.get("output_path")
+            else None
+        ),
+        "stats": result.get("stats", {}) if not failed and isinstance(result, dict) else {},
+        "error": str(result) if failed else None,
+    }
 
 
 async def process_files_background(
@@ -70,56 +116,88 @@ async def process_files_background(
 ) -> None:
     """
     Background task to process files.
-    
+
     Args:
         job_id: Unique job identifier
         incoming_path: Path to incoming transactions file
         outgoing_path: Path to outgoing transactions file
     """
+    executor = ThreadPoolExecutor(max_workers=settings.max_concurrent_llm_calls)
     try:
         jobs[job_id]["status"] = "processing"
-        jobs[job_id]["message"] = "Processing incoming transactions..."
-        
-        # Process incoming file
-        incoming_result = await transaction_service.process_file(str(incoming_path), "incoming")
-        jobs[job_id]["incoming_result"] = incoming_result
-        
-        jobs[job_id]["message"] = "Processing outgoing transactions..."
-        
-        # Process outgoing file
-        outgoing_result = await transaction_service.process_file(str(outgoing_path), "outgoing")
-        jobs[job_id]["outgoing_result"] = outgoing_result
-        
-        # Build final response
+        jobs[job_id]["message"] = "Processing incoming and outgoing transactions..."
+
+        # Shared semaphore so both directions compete for the same LLM concurrency budget
+        shared_semaphore = asyncio.Semaphore(settings.max_concurrent_llm_calls)
+
+        incoming_orig = _extract_original_filename(incoming_path)
+        outgoing_orig = _extract_original_filename(outgoing_path)
+
+        results = await asyncio.gather(
+            transaction_service.process_file(
+                str(incoming_path), "incoming",
+                job_id=job_id,
+                original_filename=incoming_orig,
+                semaphore=shared_semaphore,
+                executor=executor,
+            ),
+            transaction_service.process_file(
+                str(outgoing_path), "outgoing",
+                job_id=job_id,
+                original_filename=outgoing_orig,
+                semaphore=shared_semaphore,
+                executor=executor,
+            ),
+            return_exceptions=True,
+        )
+
+        incoming_result, outgoing_result = results
+        incoming_failed = isinstance(incoming_result, Exception)
+        outgoing_failed = isinstance(outgoing_result, Exception)
+
+        if incoming_failed and outgoing_failed:
+            raise FileProcessingError(
+                "Both directions failed",
+                details={
+                    "incoming_error": str(incoming_result),
+                    "outgoing_error": str(outgoing_result),
+                }
+            )
+
+        if incoming_failed:
+            logger.error(f"Job {job_id} incoming direction failed: {incoming_result}")
+        else:
+            jobs[job_id]["incoming_result"] = incoming_result
+
+        if outgoing_failed:
+            logger.error(f"Job {job_id} outgoing direction failed: {outgoing_result}")
+        else:
+            jobs[job_id]["outgoing_result"] = outgoing_result
+
         jobs[job_id]["status"] = "completed"
         jobs[job_id]["message"] = "Processing completed successfully"
         jobs[job_id]["result"] = {
-            "incoming": {
-                "filename": Path(incoming_result["output_path"]).name if incoming_result.get("output_path") else None,
-                "stats": incoming_result.get("stats", {})
-            },
-            "outgoing": {
-                "filename": Path(outgoing_result["output_path"]).name if outgoing_result.get("output_path") else None,
-                "stats": outgoing_result.get("stats", {})
-            }
+            "incoming": _build_direction_result(incoming_result, incoming_failed),
+            "outgoing": _build_direction_result(outgoing_result, outgoing_failed),
         }
-        
+
         logger.info(f"Job {job_id} completed successfully")
-        
+
     except FileProcessingError as e:
         logger.error(f"Job {job_id} failed with processing error: {e}", exc_info=True)
         jobs[job_id]["status"] = "failed"
         jobs[job_id]["message"] = f"Processing failed: {e.message}"
         jobs[job_id]["error"] = e.message
         jobs[job_id]["error_details"] = e.details
-    
+
     except Exception as e:
         logger.error(f"Job {job_id} failed with unexpected error: {e}", exc_info=True)
         jobs[job_id]["status"] = "failed"
         jobs[job_id]["message"] = f"Processing failed: {str(e)}"
         jobs[job_id]["error"] = str(e)
-    
+
     finally:
+        executor.shutdown(wait=False)
         # Clean up uploaded files
         for path in [incoming_path, outgoing_path]:
             try:
@@ -130,12 +208,12 @@ async def process_files_background(
                 logger.warning(f"Failed to cleanup {path}: {cleanup_error}")
 
 
-def validate_file_extension(filename: str) -> None:
+def validate_file_extension(filename: Optional[str]) -> None:
     """
     Validate file has correct extension.
     
     Args:
-        filename: Name of file to validate
+        filename: Name of file to validate (may be None for unnamed uploads)
     
     Raises:
         HTTPException: If file extension is invalid

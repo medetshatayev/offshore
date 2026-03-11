@@ -1,13 +1,13 @@
 """
-OpenAI client using direct REST API calls to internal gateway.
+OpenAI Responses API client using direct REST API calls.
 Handles API calls with retries and structured output.
 """
 import json
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
-import urllib3
+from requests.adapters import HTTPAdapter
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -19,11 +19,62 @@ from core.config import get_settings
 from core.exceptions import ConfigurationError, LLMError
 from core.logger import setup_logger
 
-# Disable SSL warnings for internal gateway
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
 logger = setup_logger(__name__)
 settings = get_settings()
+
+# Static JSON schema for BatchOffshoreRiskResponse — built once at import time.
+RESPONSE_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "results": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "transaction_id": {
+                        "type": "string",
+                        "description": "Transaction identifier"
+                    },
+                    "classification": {
+                        "type": "object",
+                        "properties": {
+                            "label": {
+                                "type": "string",
+                                "enum": ["OFFSHORE_YES", "OFFSHORE_SUSPECT", "OFFSHORE_NO"],
+                                "description": "Offshore risk classification label"
+                            },
+                            "confidence": {
+                                "type": "number",
+                                "description": "Confidence score between 0.0 and 1.0"
+                            }
+                        },
+                        "required": ["label", "confidence"],
+                        "additionalProperties": False,
+                        "description": "Offshore risk classification with confidence"
+                    },
+                    "reasoning_short_ru": {
+                        "type": "string",
+                        "description": "Brief reasoning in Russian (1-2 sentences) under 500 characters"
+                    },
+                    "sources": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Citation URLs from web search (include URLs if web_search was used, otherwise empty array)"
+                    }
+                },
+                "required": [
+                    "transaction_id",
+                    "classification",
+                    "reasoning_short_ru",
+                    "sources"
+                ],
+                "additionalProperties": False
+            }
+        }
+    },
+    "required": ["results"],
+    "additionalProperties": False
+}
 
 
 def extract_json_from_text(content: str) -> str:
@@ -55,22 +106,40 @@ def extract_json_from_text(content: str) -> str:
 
 
 class OpenAIClientWrapper:
-    """Wrapper for OpenAI REST API with retry logic."""
+    """Wrapper for the OpenAI Responses API with retry logic."""
     
     def __init__(self):
-        """Initialize REST API client."""
+        """Initialize REST API client with a persistent connection pool."""
         if not settings.openai_api_key:
             raise ConfigurationError(
                 "OPENAI_API_KEY environment variable not set",
                 details={"required_key": "OPENAI_API_KEY"}
             )
-        
-        self.gateway_url = settings.openai_gateway_url
+
+        self.responses_url = settings.openai_responses_url
         self.api_key = settings.openai_api_key
         self.model = settings.openai_model
         self.timeout = settings.openai_timeout
-        
-        logger.info(f"Initialized OpenAI REST client with model: {self.model}, gateway: {self.gateway_url}")
+
+        # Persistent session with connection pooling sized to concurrency limit
+        pool_size = max(settings.max_concurrent_llm_calls, 5)
+        self.session = requests.Session()
+        adapter = HTTPAdapter(
+            pool_connections=pool_size,
+            pool_maxsize=pool_size,
+        )
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
+
+        logger.info(
+            "Initialized OpenAI Responses API client with model: %s, url: %s",
+            self.model,
+            self.responses_url,
+        )
+
+    def close(self) -> None:
+        """Close the underlying HTTP session and release connection pool."""
+        self.session.close()
     
     @retry(
         stop=stop_after_attempt(3),
@@ -86,7 +155,7 @@ class OpenAIClientWrapper:
         temperature: float = 0.2,
     ) -> Dict[str, Any]:
         """
-        Call OpenAI Gateway completions API with structured output.
+        Call the OpenAI Responses API with structured output.
         
         Args:
             system_prompt: System instruction
@@ -100,21 +169,22 @@ class OpenAIClientWrapper:
         Raises:
             LLMError: If API call fails after retries
         """
-        # Build request payload for gateway
+        # Build request payload for the Responses API.
         payload = {
             "model": self.model,
-            "reasoning": {"effort": "low"},
-            "input": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
-            ],
+            "instructions": system_prompt,
+            "reasoning": {"effort": "medium"},
+            "input": user_message,
+            "include": ["web_search_call.action.sources"],
             "tools": [{"type": "web_search"}],
             "tool_choice": "auto",
             "text": {
-                "type": "json_schema",
-                "name": "batch_offshore_risk_response",
-                "strict": True,
-                "schema": response_schema
+                "format": {
+                    "type": "json_schema",
+                    "name": "batch_offshore_risk_response",
+                    "strict": True,
+                    "schema": response_schema,
+                }
             }
         }
         
@@ -129,75 +199,60 @@ class OpenAIClientWrapper:
         }
         
         try:
-            # Log request payload
-            # logger.info(f"Payload user message: {json.dumps(user_message, ensure_ascii=False, indent=2)}")
-            
-            # Make POST request to gateway
-            response = requests.post(
-                self.gateway_url,
+            # Make POST request via persistent session; headers passed per-request.
+            response = self.session.post(
+                self.responses_url,
                 headers=headers,
-                data=json.dumps(payload),
-                verify=False,  # Disable SSL verification for internal gateway
+                json=payload,
                 timeout=self.timeout
             )
             
             # Raise for HTTP errors (4xx, 5xx)
             response.raise_for_status()
             
-            # Log raw response
-            # logger.info(f"LLM raw response: {json.dumps(response.text, ensure_ascii=False, indent=2)}")
-            
-            # Parse NDJSON response (split by newlines)
-            response_text = response.text.strip()
-            json_objects = response_text.split('\n')
+            logger.debug(
+                "Responses API status: %s, length: %s",
+                response.status_code,
+                len(response.text),
+            )
 
-            # According to the test example, we need the second JSON object
-            if len(json_objects) < 2:
-                # If only one object, check if it has the expected structure
-                if len(json_objects) == 1:
-                    completion_data = json.loads(json_objects[0])
-                else:
-                    raise ValueError("Empty response from gateway")
-            else:
-                # Parse the second JSON object (index 1)
-                completion_data = json.loads(json_objects[1])
-            
-            # Extract assistant's message content
-            content = None
-            
-            # Check if it's a standard OpenAI response with choices
-            if "choices" in completion_data:
-                try:
-                    content = completion_data["choices"][0]["message"]["content"]
-                except (KeyError, IndexError):
-                    pass
-            
-            # Check if it's a response with output list (as seen in logs)
-            if not content and "output" in completion_data:
-                for item in completion_data["output"]:
-                    if item.get("type") == "message" and item.get("role") == "assistant":
-                        for content_item in item.get("content", []):
-                            if content_item.get("type") == "output_text":
-                                content = content_item.get("text")
-                                break
-                    if content:
-                        break
-            
+            completion_data = response.json()
+
+            # Check for API-level error response.
+            if completion_data.get("error") and "output" not in completion_data:
+                error_detail = completion_data["error"]
+                logger.error(
+                    "Responses API returned error response: %s",
+                    json.dumps(error_detail, ensure_ascii=False)
+                    if isinstance(error_detail, (dict, list))
+                    else error_detail,
+                )
+                raise ValueError(
+                    f"OpenAI API error: {error_detail.get('message', error_detail) if isinstance(error_detail, dict) else error_detail}"
+                )
+
+            content = self._extract_output_text(completion_data)
+
             if not content:
                 logger.error(f"Response keys: {list(completion_data.keys())}")
-                # logger.info(f"Full response: {json.dumps(completion_data, indent=2)}")
-                raise ValueError(
-                    "Unexpected response structure: could not find content in 'choices' or 'output'"
+                logger.error(
+                    f"Full response (truncated): {json.dumps(completion_data, ensure_ascii=False, indent=2)[:2000]}"
                 )
-            
+                raise ValueError(
+                    "Unexpected Responses API structure: could not find assistant output text"
+                )
+
             # Extract JSON from response (handles markdown code blocks and surrounding text)
             content_stripped = extract_json_from_text(content)
-            
+
             # Parse JSON response
             result = json.loads(content_stripped)
-            
-            # Log parsed result
-            # logger.info(f"LLM parsed result: {json.dumps(result, ensure_ascii=False, indent=2)}")
+
+            shared_sources = self._extract_response_sources(completion_data)
+            if shared_sources and isinstance(result, dict):
+                for item in result.get("results", []):
+                    if isinstance(item, dict) and item.get("sources") is None:
+                        item["sources"] = shared_sources
             
             # Log token usage if available
             if 'usage' in completion_data:
@@ -207,116 +262,106 @@ class OpenAIClientWrapper:
                 logger.info(f"Token usage - Input: {input_tokens}, Output: {output_tokens}")
             
             return result
+
+        except LLMError:
+            raise
         
         except requests.exceptions.Timeout as e:
-            logger.error(f"Gateway request timeout after {self.timeout}s: {e}")
+            logger.error(f"Responses API request timeout after {self.timeout}s: {e}")
             raise LLMError(
-                f"Gateway request timeout after {self.timeout}s",
-                details={"gateway_url": self.gateway_url, "timeout": self.timeout}
+                f"Responses API request timeout after {self.timeout}s",
+                details={"responses_url": self.responses_url, "timeout": self.timeout}
             )
         
         except requests.exceptions.HTTPError as e:
-            logger.error(f"Gateway HTTP error: {e}")
+            logger.error(f"Responses API HTTP error: {e}")
             raise LLMError(
-                f"Gateway returned HTTP error: {e}",
+                f"OpenAI API returned HTTP error: {e}",
                 details={
-                    "gateway_url": self.gateway_url,
+                    "responses_url": self.responses_url,
                     "status_code": getattr(e.response, "status_code", None),
                     "response_text": getattr(e.response, "text", None),
                 }
             )
         
         except requests.exceptions.RequestException as e:
-            logger.error(f"Gateway request failed: {e}")
+            logger.error(f"Responses API request failed: {e}")
             raise LLMError(
-                f"Failed to connect to gateway: {str(e)}",
-                details={"gateway_url": self.gateway_url, "error": str(e)}
+                f"Failed to connect to OpenAI API: {str(e)}",
+                details={"responses_url": self.responses_url, "error": str(e)}
             )
         
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse gateway response as JSON: {e}")
+            logger.error(f"Failed to parse Responses API payload as JSON: {e}")
             raw_response = response.text if 'response' in locals() else "N/A"
             logger.error(f"Raw response: {raw_response}")
             raise LLMError(
-                f"Gateway returned invalid JSON: {e}",
+                f"OpenAI API returned invalid JSON: {e}",
                 details={"raw_response": raw_response}
             )
         
         except ValueError as e:
-            logger.error(f"Error parsing gateway response: {e}")
+            logger.error(f"Error parsing Responses API response: {e}")
             raise LLMError(
-                f"Gateway response parsing error: {str(e)}",
+                f"OpenAI API response parsing error: {str(e)}",
                 details={"error": str(e)}
             )
         
         except Exception as e:
-            logger.error(f"Unexpected error calling gateway: {e}")
+            logger.error(f"Unexpected error calling OpenAI API: {e}")
             raise LLMError(
-                f"Unexpected error calling gateway: {str(e)}",
+                f"Unexpected error calling OpenAI API: {str(e)}",
                 details={"model": self.model, "error": str(e)}
             )
 
+    @staticmethod
+    def _extract_output_text(completion_data: Dict[str, Any]) -> Optional[str]:
+        """Extract the assistant output text from a Responses API payload."""
+        if completion_data.get("output_text"):
+            return completion_data["output_text"]
 
-def create_response_schema() -> Dict[str, Any]:
-    """
-    Create JSON schema for BatchOffshoreRiskResponse.
-    This ensures the LLM returns properly structured data for a batch of transactions.
-    
-    Returns:
-        JSON schema dictionary
-    """
-    return {
-        "type": "object",
-        "properties": {
-            "results": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "transaction_id": {
-                            "type": "string",
-                            "description": "Transaction identifier"
-                        },
-                        "classification": {
-                            "type": "object",
-                            "properties": {
-                                "label": {
-                                    "type": "string",
-                                    "enum": ["OFFSHORE_YES", "OFFSHORE_SUSPECT", "OFFSHORE_NO"],
-                                    "description": "Offshore risk classification label"
-                                },
-                                "confidence": {
-                                    "type": "number",
-                                    "description": "Confidence score between 0.0 and 1.0"
-                                }
-                            },
-                            "required": ["label", "confidence"],
-                            "additionalProperties": False,
-                            "description": "Offshore risk classification with confidence"
-                        },
-                        "reasoning_short_ru": {
-                            "type": "string",
-                            "description": "Brief reasoning in Russian (1-2 sentences) under 500 characters"
-                        },
-                        "sources": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Citation URLs from web search (include URLs if web_search was used, otherwise empty array)"
-                        }
-                    },
-                    "required": [
-                        "transaction_id",
-                        "classification",
-                        "reasoning_short_ru",
-                        "sources"
-                    ],
-                    "additionalProperties": False
-                }
-            }
-        },
-        "required": ["results"],
-        "additionalProperties": False
-    }
+        for item in completion_data.get("output", []):
+            if item.get("type") != "message" or item.get("role") != "assistant":
+                continue
+
+            for content_item in item.get("content", []):
+                content_type = content_item.get("type")
+                if content_type == "refusal":
+                    raise LLMError(
+                        "Model refused to provide a structured response",
+                        details={"refusal": content_item.get("refusal")},
+                    )
+                if content_type == "output_text":
+                    return content_item.get("text")
+
+        return None
+
+    @staticmethod
+    def _extract_response_sources(completion_data: Dict[str, Any]) -> List[str]:
+        """Collect cited URLs exposed by Responses API web-search items."""
+        urls: List[str] = []
+        seen = set()
+
+        for item in completion_data.get("output", []):
+            if item.get("type") == "web_search_call":
+                action = item.get("action") or {}
+                for source in action.get("sources", []):
+                    url = source.get("url")
+                    if url and url not in seen:
+                        seen.add(url)
+                        urls.append(url)
+
+            if item.get("type") == "message":
+                for content_item in item.get("content", []):
+                    for annotation in content_item.get("annotations", []):
+                        if annotation.get("type") != "url_citation":
+                            continue
+                        url = annotation.get("url")
+                        if url and url not in seen:
+                            seen.add(url)
+                            urls.append(url)
+
+        return urls
 
 
 # Singleton client instance
@@ -326,7 +371,7 @@ _client: Optional[OpenAIClientWrapper] = None
 def get_client() -> OpenAIClientWrapper:
     """
     Get or create OpenAI client singleton.
-    
+
     Returns:
         OpenAI client wrapper instance
     """
@@ -334,3 +379,11 @@ def get_client() -> OpenAIClientWrapper:
     if _client is None:
         _client = OpenAIClientWrapper()
     return _client
+
+
+def close_client() -> None:
+    """Close the singleton client's HTTP session if it was initialized."""
+    global _client
+    if _client is not None:
+        _client.close()
+        _client = None

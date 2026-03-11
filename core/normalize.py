@@ -2,6 +2,7 @@
 Data normalization and metadata enrichment.
 Handles currency conversion, amount cleaning, and transaction metadata.
 """
+import re
 from typing import Any, Dict, Optional
 
 import pandas as pd
@@ -35,15 +36,8 @@ def clean_amount_kzt(value: Any) -> Optional[float]:
     if not amount_str:
         return None
     
-    # Remove spaces and common thousands separators
-    amount_str = amount_str.replace(" ", "").replace(",", "").replace("\xa0", "")
-    
-    # Remove any non-numeric characters except decimal point and minus sign
-    # This handles cases like "5000000.00 KZT" or similar
-    cleaned = ""
-    for char in amount_str:
-        if char.isdigit() or char in [".", "-"]:
-            cleaned += char
+    # Strip spaces, non-breaking spaces, thousands separators, then non-numeric suffixes
+    cleaned = re.sub(r"[^\d.\-]", "", amount_str)
     
     if not cleaned:
         logger.warning(f"Failed to parse amount: '{value}' - no numeric content")

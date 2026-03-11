@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from core.exceptions import LLMError
 from core.logger import setup_logger
 from core.schema import BatchOffshoreRiskResponse, Classification, OffshoreRiskResponse
-from llm.client import create_response_schema, get_client
+from llm.client import RESPONSE_SCHEMA, get_client
 from llm.prompts import build_system_prompt, build_user_message
 
 logger = setup_logger(__name__)
@@ -44,10 +44,7 @@ def classify_batch(
         
         # Get LLM client
         client = get_client()
-        
-        # Create response schema
-        response_schema = create_response_schema()
-        
+
         # Retry loop for validation errors (malformed LLM responses)
         batch_result = None
         last_validation_error = None
@@ -57,7 +54,7 @@ def classify_batch(
             llm_response = client.call_with_structured_output(
                 system_prompt=system_prompt,
                 user_message=user_message,
-                response_schema=response_schema,
+                response_schema=RESPONSE_SCHEMA,
                 temperature=temperature,
             )
             

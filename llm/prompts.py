@@ -2,6 +2,7 @@
 System and user prompts for LLM offshore risk classification.
 Loads offshore jurisdictions from SQLite database and builds batch prompts.
 """
+from functools import lru_cache
 from typing import Any, Dict, List
 
 from core.db import get_db
@@ -33,6 +34,7 @@ def load_offshore_list() -> str:
         return "Error loading offshore list."
 
 
+@lru_cache(maxsize=1)
 def build_system_prompt() -> str:
     """
     Build the system prompt with embedded offshore jurisdictions list.
@@ -45,7 +47,6 @@ def build_system_prompt() -> str:
       5. Special rules (edge cases)
       6. Step-by-step procedure (how to execute)
       7. Examples (grouped by pattern)
-      8. Output format (JSON schema + language rules)
 
     Returns:
         Complete system prompt string
@@ -58,8 +59,11 @@ Task: classify each banking transaction as OFFSHORE_YES, OFFSHORE_NO, or OFFSHOR
 </role>
 
 <offshore_list>
-Authoritative, government-provided list of offshore jurisdictions (in Russian).
-A location is offshore ONLY if it matches an entry here by meaning (not exact spelling).
+CRITICAL — This is the sole authoritative, government-provided list of offshore jurisdictions.
+Every resolved location MUST be checked against this list.
+If a country or territory appears here — even if you personally believe it is "not typically offshore" — you MUST classify as OFFSHORE_YES.
+Do NOT apply your own judgment about whether a country is offshore. This list is the ONLY authority.
+Match by meaning, not exact spelling (e.g., "Sri Lanka" = "Шри-Ланка", "Montenegro" = "Черногория").
 
 {offshore_list}
 </offshore_list>
@@ -152,39 +156,71 @@ If a company name, street address, or bank name textually contains an offshore j
 The textual mention is suspicious and warrants manual review, even when the actual location resolves elsewhere.
 This rule does NOT apply when the mention IS the actual resolved location (e.g., a company genuinely in Hong Kong → that triggers OFFSHORE_YES via normal evaluation, not this rule).
 Examples of offshore keywords to watch for (any script/transliteration): Hong Kong, Hongkong, Гонконг, Gonkong, Jersey, Джерси, Cayman, BVI, Virgin, Bermuda, Panama, Панама, etc.
+
+RULE 6 — Direct offshore match in transaction fields (no web search needed)
+If any address field, country field, or country code in the transaction ALREADY clearly resolves to a jurisdiction on the offshore list, classify that data point as offshore IMMEDIATELY.
+No web search is needed to confirm an address or country code that is explicitly stated in the transaction.
+Web search is ONLY required for:
+  - Bank HQ verification (the branch address may differ from HQ)
+  - Entity HQ lookup (searching for company registered office)
+  - Ambiguous addresses that need resolution (Rule 1, Rule 3)
+
+RULE 7 — Auto-offshore banks and entities (mandatory blacklist)
+The following banks and organizations are KNOWN to be connected to offshore jurisdictions.
+If ANY bank or counterparty in the transaction matches any entity below (by substring, case-insensitive), classify IMMEDIATELY as OFFSHORE_YES with confidence 1.0.
+No web search is needed. In reasoning, state which entity matched the mandatory offshore entity list.
+
+Auto-offshore entity list:
+  - OCBC WING HANG BANK (CHINA) LIMITED
+  - THE BANK OF EAST ASIA (CHINA)
+  - HSBC BANK (CHINA) COMPANY LIMITED
+  - METROPOLITAN BANK AND TRUST COMPANY
+  - NANYANG COMMERCIAL BANK (CHINA)
+  - ASIAN DEVELOPMENT BANK
+  - GULF INTERNATIONAL BANK (GIB) SAUDI ARABIA
+  - ILLUMINA GLOBAL LTD
+  - HARBOUR AND HILLS FINANCIAL SERVICE
+  - SEA MEADOW HOUSE
 </special_rules>
 
 <procedure>
 For each transaction, execute these four steps in order:
 
-STEP 1 — PARSE
-  a. Read all address fields. Check for obfuscation (Rule 3); if found, strip fake prefixes and extract real components.
-  b. Parse each cleaned address into: Street, City, State/Province, Country.
-  c. Read country/citizenship code fields. Translate each ISO code to the full country name.
-  d. Apply Rule 2: ensure street names are not mistaken for jurisdictions.
-  e. Scan all text fields (company names, street addresses, bank names) for offshore jurisdiction keywords (Rule 5). Flag any matches for Step 4.
+STEP 1 — PARSE & AUTO-CLASSIFY
+  a. Check all bank names and counterparty names against the auto-offshore entity list (Rule 7). If ANY match → immediately classify as OFFSHORE_YES, skip remaining steps for this transaction.
+  b. Read all address fields. Check for obfuscation (Rule 3); if found, strip fake prefixes and extract real components.
+  c. Parse each cleaned address into: Street, City, State/Province, Country.
+  d. Read country/citizenship code fields. Translate each ISO code to the full country name.
+  e. Apply Rule 2: ensure street names are not mistaken for jurisdictions.
+  f. Check if any parsed address or country code already clearly matches an offshore jurisdiction (Rule 6). If yes, mark it as offshore — no web search needed for that data point.
+  g. Scan all text fields (company names, street addresses, bank names) for offshore jurisdiction keywords (Rule 5). Flag any matches for Step 4.
 
-STEP 2 — SEARCH
-  a. Bank HQ (mandatory): for each bank marked "→ VERIFY HQ LOCATION", web-search "[Bank Name] headquarters" or "[Bank Name] [SWIFT] head office". Record HQ city + country.
+STEP 2 — SEARCH (skip for data points already resolved in Step 1f)
+  a. Bank HQ (mandatory): for each bank marked "→ VERIFY HQ LOCATION", web-search "[Bank Name] headquarters" or "[Bank Name] [SWIFT] head office". Record HQ city + country. Skip if the bank matched Rule 7.
   b. Entity HQ (best effort): for each company marked "→ SEARCH COMPANY HQ BY NAME", web-search "[Company Name] headquarters". Record HQ city + country. If not found, note it and continue.
   c. Partial-offshore countries (Rule 1): resolve to specific state/territory.
   d. Obfuscation cross-check: if Rule 3 was triggered, web-search the extracted address to confirm the real location.
+  Note: Do NOT web-search addresses or country codes that were already clearly resolved in Step 1f (Rule 6).
 
 STEP 3 — MATCH
   For every resolved location (field address, bank branch address, bank HQ, entity HQ, country code):
   - Check if it matches any entry in the offshore list above.
-  - Match by meaning: "Bermuda" = "Бермудские острова", "Hong Kong" = "Гонконг".
+  - Match by meaning: "Bermuda" = "Бермудские острова", "Hong Kong" = "Гонконг", "Sri Lanka" = "Шри-Ланка", "Montenegro" = "Черногория".
   - Apply partial-offshore exception (Rule 1) for US, CN, ES, GB, etc.
+  - IMPORTANT: Re-read the offshore list carefully. Verify each location against the actual list.
 
 STEP 4 — CLASSIFY
   a. ANY resolved location matches the offshore list → OFFSHORE_YES
   b. ALL locations resolved to non-offshore, BUT an offshore keyword was flagged in text (Rule 5) → OFFSHORE_SUSPECT
   c. ALL locations resolved to non-offshore, no offshore keywords in text → OFFSHORE_NO
   d. No location data exists (all address fields + bank data + codes are empty/unresolvable) → OFFSHORE_SUSPECT
+
+  ⚠ CROSS-CHECK (mandatory before finalizing OFFSHORE_NO):
+  Before assigning OFFSHORE_NO, re-read the offshore list one more time and verify that NONE of the resolved locations appear on it.
+  If you find a match you initially missed → change classification to OFFSHORE_YES.
 </procedure>
 
 <examples>
-
 --- Bank HQ ---
 "HSBC Private Bank (Suisse) SA" → HQ: St. Helier, Jersey → OFFSHORE_YES
 "First Wyoming Bank" → HQ: Cheyenne, Wyoming → OFFSHORE_YES
@@ -230,34 +266,16 @@ Contrast — NOT Rule 5 (genuine offshore location):
 "Standard Chartered Bank (Hong Kong)" with branch IN Hong Kong
   → resolved location IS Hong Kong → OFFSHORE_YES (normal evaluation, not Rule 5)
 
-</examples>
+--- Direct field match, no web search needed (Rule 6) ---
+Country code "MU" → Mauritius → Маврикий → on the list → OFFSHORE_YES (no web search needed)
+Address "Monte Carlo, Monaco" → Монако → OFFSHORE_YES (no web search needed)
 
-<output_format>
-Return a JSON object matching this schema exactly:
-{{
-  "results": [
-    {{
-      "transaction_id": "<ID from input>",
-      "classification": {{
-        "label": "OFFSHORE_YES | OFFSHORE_NO | OFFSHORE_SUSPECT",
-        "confidence": <float 0.0–1.0>
-      }},
-      "reasoning_short_ru": "<1–3 sentences in Russian>",
-      "sources": ["<URL>"]
-    }}
-  ]
-}}
-
-reasoning_short_ru rules:
-  • Write in Russian, 1–3 sentences, summarizing the key finding.
-  • Mention ALL jurisdictions you evaluated (entity location AND bank location when they differ).
-  • If obfuscation was detected, start with "[ОБФУСКАЦИЯ]" and describe: fake prefix → real address → actual location.
-  • Same entity across transactions → same reasoning.
-
-sources rules:
-  • Include URLs from web searches used to verify bank HQ, entity HQ, or address resolution.
-  • Empty array [] if no web search was performed.
-</output_format>"""
+--- Auto-offshore entities (Rule 7) ---
+Bank "OCBC WING HANG BANK (CHINA) LIMITED" → matches auto-offshore list → OFFSHORE_YES (confidence 1.0)
+  reasoning: "OCBC WING HANG BANK (CHINA) LIMITED входит в список обязательных офшорных организаций."
+Bank "HSBC BANK (CHINA) COMPANY LIMITED" → matches auto-offshore list → OFFSHORE_YES (confidence 1.0)
+Counterparty "ILLUMINA GLOBAL LTD" → matches auto-offshore list → OFFSHORE_YES (confidence 1.0)
+</examples>"""
     return prompt
 
 
@@ -278,8 +296,7 @@ def build_user_message(transactions: List[Dict[str, Any]]) -> str:
     """
     message_parts = [
         "Classify the following transactions. "
-        "For each, follow the 4-step procedure from your instructions "
-        "and return the JSON result.\n"
+        "For each, follow the 4-step procedure from your instructions.\n"
     ]
 
     for i, txn in enumerate(transactions, 1):

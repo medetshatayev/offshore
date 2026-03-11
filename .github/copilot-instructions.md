@@ -2,106 +2,148 @@
 
 ## Architecture Overview
 
-This is a FastAPI application that processes banking transactions to detect offshore jurisdiction involvement for Kazakhstani banks. The system uses OpenAI GPT-4 for classification with structured output.
+This repository contains a FastAPI application for offshore-risk screening of banking transactions for Kazakhstani bank workflows. The current implementation classifies transactions through the OpenAI Responses API, exports annotated Excel files, and logs classification results to PostgreSQL.
 
-**Core Data Flow:**
-1. Excel upload → Parsing (Cyrillic headers) → Filtering (≥5M KZT) → Normalization
-2. Batch LLM classification (10 transactions/batch, semaphore-controlled concurrency)
-3. Export to Excel with `Результат` column containing Russian-language analysis
+Core runtime flow:
+1. Upload paired incoming and outgoing Excel files.
+2. Parse, validate, and filter each direction independently.
+3. Normalize rows into transaction dictionaries.
+4. Classify in LLM batches with shared concurrency limits.
+5. Export results to Excel and log batches to PostgreSQL.
 
-**Service Boundaries:**
-- `app/api.py`: FastAPI routes, background job orchestration, in-memory job storage
-- `services/transaction_service.py`: Business logic, batch processing orchestration
-- `core/`: Configuration, parsing, normalization, schema validation, export
-- `llm/`: OpenAI client (REST API gateway), prompts, classification logic
+Primary boundaries:
+- `app/api.py`: FastAPI routes, background job handling, in-memory job state, startup and shutdown hooks.
+- `services/transaction_service.py`: end-to-end pipeline orchestration for one file.
+- `core/`: configuration, parsing, normalization, export, databases, logging, schemas.
+- `llm/`: prompt construction, Responses API client, batch classification.
 
-## Critical File Formats
+## Current Application Behavior
 
-**Both incoming and outgoing transactions:** Excel with headers at row 6 (A6), skiprows=[0,1,2,3,4,6]
-- **Incoming transactions:** 37 columns
-- **Outgoing transactions:** 27 columns
-- **Row 7 contains column numbers** (1-37 or 1-27) and is automatically skipped
+The application currently does all of the following:
 
-All column headers are in **Russian/Cyrillic**. Key columns:
+- Requires both an incoming file and an outgoing file in each `/process` request.
+- Stores uploaded and generated files under `STORAGE_PATH`.
+- Processes incoming and outgoing directions concurrently in a background task.
+- Uses one shared `asyncio.Semaphore` so both directions compete for the same LLM concurrency budget.
+- Runs blocking LLM calls inside a `ThreadPoolExecutor`.
+- Allows a job to complete even if one direction fails and the other succeeds.
+- Stores job state only in memory.
 
-**Common to both:**
-- `Сумма в тенге` (Amount in KZT) - requires normalization via `clean_amount_kzt()`
-- `Валюта платежа` (Payment currency)
-- `Дата валютирования` (Value date)
+Job status values used by the API:
+- `queued`
+- `processing`
+- `completed`
+- `failed`
 
-**Incoming-specific (37 columns total):**
-- `Плательщик (Наименование)` - Payer name
-- `Адрес плательщика` - **NEW: Payer physical address** (critical for offshore detection)
-- `SWIFT код Банка плательщика` - Payer bank SWIFT
-- `Адрес банка плательщика` - Payer bank address
-- `Страна банка плательщика` - **NEW: Payer bank country** (critical for combining with address)
-- `SWIFT код Корреспондента Банка Плательщика(отправителя)` - **NEW: Correspondent bank** (evaluated as 3rd address)
-- `Банк-посредник отправителя 1/2/3` - **NEW: Intermediary banks** (context only)
+## Configuration
 
-**Outgoing-specific (27 columns total):**
-- `Получатель` - Recipient name
-- `Адрес получателя` - **NEW: Recipient physical address** (critical for offshore detection)
-- `SWIFT Банка получателя` - Recipient bank SWIFT
-- `Адрес банка получателя` - Recipient bank address
-- `Страна банка` - **NEW: Recipient bank country** (critical for combining with address)
+All settings come from `core/config.py` via `get_settings()`.
 
-**Column name normalization:** System automatically trims whitespace and replaces multiple spaces with single space to handle formatting variations.
+Required environment variables:
+- `HOST`
+- `PORT`
+- `LOG_LEVEL`
+- `ROOT_PATH`
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL`
+- `OPENAI_TIMEOUT`
+- `AMOUNT_THRESHOLD_KZT`
+- `MAX_CONCURRENT_LLM_CALLS`
+- `STORAGE_PATH`
+- `POSTGRES_HOST`
+- `POSTGRES_PORT`
+- `POSTGRES_DB`
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
 
-Output adds `Результат` column with format: `Итог: {label_ru} | Уверенность: {conf}% | Объяснение: {reasoning}`
+Optional settings with current defaults:
+- `BATCH_SIZE=10`
+- `DATABASE_PATH=offshore.db`
+- `OPENAI_RESPONSES_URL=https://api.openai.com/v1/responses`
+- `POSTGRES_MIN_POOL=2`
+- `POSTGRES_MAX_POOL=10`
 
-## Configuration & Environment
+Validation rules implemented today:
+- `PORT` must be in `1..65535`.
+- `LOG_LEVEL` must be one of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`.
+- `MAX_CONCURRENT_LLM_CALLS` must be in `1..50`.
+- `BATCH_SIZE` must be in `1..20`.
 
-All settings via Pydantic `Settings` class in `core/config.py`. Access with `get_settings()` singleton.
+## File Formats
 
-**Required env vars:**
-- `OPENAI_API_KEY` - API key for OpenAI gateway
-- `OPENAI_GATEWAY_URL` - Internal REST API gateway endpoint (not standard OpenAI URL)
+Both incoming and outgoing Excel files are parsed with:
+- headers at row 6
+- `skiprows=[0,1,2,3,4,6]`
+- row 7 treated as the column-number row and skipped
 
-**Key settings:**
-- `AMOUNT_THRESHOLD_KZT=5000000` - Filter transactions below threshold
-- `MAX_CONCURRENT_LLM_CALLS=5` - Semaphore limit for async batch processing
-- Headers at row 6 (both directions) - `skiprows=[0,1,2,3,4,6]` in `parse_excel_file()`
-  - Skips rows 1-5 (metadata) and row 7 (column numbers)
+Parser behavior:
+- `.xls` uses `xlrd`
+- `.xlsx` uses `openpyxl`
+- column names are normalized by trimming and collapsing repeated spaces
+- fully empty rows are dropped
+- missing expected columns produce warnings, not immediate failure
 
-## LLM Integration Patterns
+Expected column sets are defined in `core/parsing.py`.
 
-**Client:** Custom REST API wrapper (`llm/client.py`), NOT official OpenAI SDK. Uses:
-- Direct `requests` calls to internal gateway with SSL verification disabled
-- Tenacity retry decorator (3 attempts, exponential backoff)
-- JSON extraction from markdown code blocks (`extract_json_from_text`)
+Key normalization behavior in `core/normalize.py`:
+- `clean_amount_kzt()` strips spaces, commas, non-breaking spaces, and non-numeric suffixes.
+- Negative amounts are converted to absolute values.
+- Invalid or empty amount values become `None`.
+- Outgoing payment status filtering excludes `Отказано в исполнении` and `Удален`.
 
-**Structured Output:** Pydantic `BatchOffshoreRiskResponse` schema enforces:
-- `results` array of `OffshoreRiskResponse` objects
-- Classification: `OFFSHORE_YES | OFFSHORE_SUSPECT | OFFSHORE_NO`
-- `reasoning_short_ru` (10-500 chars, Russian language)
-- Validation retries: Up to 3 attempts on `ValidationError`
+## LLM Integration
 
-**Batch Processing:** `classify_batch()` processes 10 transactions per LLM call:
-- Builds single prompt with numbered transaction list
-- Returns array of responses mapped by `transaction_id`
-- Semaphore controls concurrency via `asyncio.Semaphore(max_concurrent_llm_calls)`
+The current LLM integration uses a custom REST client in `llm/client.py`, not the official OpenAI SDK.
 
-## Data Normalization Rules
+Implemented behavior:
+- Sends requests to the OpenAI Responses API with bearer auth.
+- Uses persistent `requests.Session` connection pooling.
+- Enables the `web_search` tool.
+- Requests strict `json_schema` output.
+- Parses standard Responses API output items.
+- Retries request failures with tenacity.
+- Retries schema validation failures up to 3 times in `classify_batch()`.
 
-**Amount cleaning (`clean_amount_kzt`):**
-- Removes spaces, commas, `\xa0` (non-breaking space)
-- Strips currency suffixes like " KZT"
-- Uses absolute value for negative amounts
-- Returns `None` for invalid/missing values
+Current classification schema:
+- `transaction_id`
+- `classification.label`
+- `classification.confidence`
+- `reasoning_short_ru`
+- `sources`
 
-**Privacy:** System intentionally excludes physical person names from LLM analysis (see `normalize_transaction()` in `core/normalize.py`) - only category/metadata sent.
+Local post-processing adds or normalizes:
+- `direction`
+- `amount_kzt`
+- fallback `OFFSHORE_SUSPECT` error responses when the LLM call fails or omits an item
 
-**Outgoing payment status filtering (`filter_by_payment_status`):**
-- Applied only to **outgoing** transactions, after amount threshold filtering
-- Excludes rows where `Статус платежа` is "Отказано в исполнении" or "Удален" (case-insensitive, whitespace-normalized)
-- If column `Статус платежа` is missing, logs warning and returns df unchanged
-- Pipeline order: amount filter → status filter (outgoing only) → normalization → LLM
+## Prompt Behavior
 
-**Offshore Database:** Offshore jurisdiction list loaded from SQLite (`core/db.py`) and embedded in system prompt. List is government-provided, authoritative source.
+The current prompt in `llm/prompts.py` instructs the model to evaluate:
+- entity addresses
+- bank branch addresses
+- bank headquarters via web search
+- entity headquarters via best-effort web search
+- country and citizenship codes
+- address obfuscation
+- partial-offshore jurisdictions
+- suspicious offshore-name mentions in text
+- a mandatory auto-offshore entity list
 
-## Offshore Database Schema
+Important prompt implementation details:
+- The offshore jurisdiction list is loaded from SQLite through `core/db.py`.
+- `build_system_prompt()` is cached with `lru_cache(maxsize=1)`.
+- Changes to the SQLite country list do not automatically refresh the cached prompt inside a running process.
+- The user message marks certain entities with `→ VERIFY HQ LOCATION` or `→ SEARCH COMPANY HQ BY NAME` instructions.
+- Physical-person workflows are partially protected by prompt rules, but `normalize_transaction()` still includes person-related address fields and metadata; avoid documenting stronger privacy guarantees than the code actually enforces.
 
-**SQLite Structure (`core/db.py`):**
+## Databases
+
+Two separate datastores exist in the current implementation.
+
+### SQLite reference data
+
+`core/db.py` manages the offshore-country reference list in table `countries`:
+
 ```sql
 CREATE TABLE countries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,148 +152,96 @@ CREATE TABLE countries (
 )
 ```
 
-**Key operations:**
-- `get_all_countries()` - Returns sorted list of jurisdiction names for prompt embedding
-- `add_country(name)` - Adds new jurisdiction with `INSERT OR IGNORE` (idempotent)
-- `init_db()` - Creates table if not exists (safe to call repeatedly)
+Use cases:
+- `get_all_countries()` returns the list for prompt embedding.
+- `add_country()` inserts with `INSERT OR IGNORE`.
+- `init_db()` creates the table if needed.
 
-**Database location:** Set via `DATABASE_PATH` env var (default: `offshore.db`)  
-**Data mount:** In Docker, map `/app/data` volume as read-only for production DB access
+### PostgreSQL transaction logging
 
-**Important:** List is embedded in LLM system prompt on every batch call - changes require app restart to take effect.
+`core/pg.py` and `core/pg_logger.py` manage PostgreSQL logging.
 
-## Excel Parsing Edge Cases
+Current startup behavior:
+- app startup tries to initialize the PostgreSQL pool
+- app startup tries to ensure the `transaction_logs` table and indexes exist
+- if initialization fails, the app logs the error and continues without batch logging
 
-**Common parsing issues and solutions:**
+The `transaction_logs` table stores:
+- `job_id`
+- `direction`
+- `transaction_id`
+- `amount_kzt`
+- `currency`
+- `classification`
+- `confidence`
+- `reasoning_ru`
+- `sources`
+- `llm_error`
+- `raw_transaction`
+- `result_text`
+- `original_filename`
+- `created_at`
 
-1. **Header row misalignment:**
-   - **Symptom:** `Missing expected columns` warning
-   - **Cause:** File has different header structure than expected
-   - **Fix:** Verify `skiprows` value in `parse_excel_file()` - both directions use `[0,1,2,3,4,6]`
-   - **Note:** Headers must be at row 6 (A6), row 7 contains column numbers and is skipped
-   - **Debug:** Check logged "Available columns" vs expected column sets (37 for incoming, 27 for outgoing)
+## Export Behavior
 
-2. **Amount normalization failures:**
-   - **Example:** `"5 000 000,00 KZT"` → removes spaces/commas/`\xa0`, strips " KZT" suffix
-   - **Edge case:** Negative amounts → `abs()` applied with warning
-   - **Returns `None` for:** Empty strings, non-numeric content, missing values
-   - **Validation:** Logged at WARNING level for troubleshooting
+Exports are created in `core/exporters.py`.
 
-3. **Old Excel format (.xls):**
-   - Uses `xlrd` engine instead of `openpyxl`
-   - Automatically detected by file extension
-   - Example: `engine = "xlrd" if path.suffix.lower() == ".xls" else "openpyxl"`
+Current behavior:
+- preserves the filtered source rows
+- appends a `Результат` column
+- writes `.xlsx` output with `xlsxwriter`
+- formats BIN and IIN columns as text
+- wraps text in the `Результат` column
 
-4. **Cyrillic encoding issues:**
-   - Files must use UTF-8 or Windows-1251 (pandas auto-detects)
-   - Column names are case-sensitive and must match exactly
-   - **Normalization applied:** System trims whitespace and replaces multiple spaces with single space
-   - Handles variations like `"Адрес  получателя"` (double space) → `"Адрес получателя"` (single space)
+Current `Результат` format:
+- `Итог: {label_ru} | Уверенность: {conf}% | Объяснение: {reasoning}`
+- adds `| Источники: ...` when sources are present
+- adds `| ОШИБКА: ...` when `llm_error` is present
 
-5. **Empty rows/columns:**
-   - `df.dropna(how="all")` removes completely empty rows
-   - Missing optional columns logged as warnings, not errors
-   - Required column: `Сумма в тенге` (raises `ValidationError` if missing)
+Current output filenames are generated as:
+- `incoming_transactions_processed_{timestamp}.xlsx`
+- `outgoing_transactions_processed_{timestamp}.xlsx`
 
-## LLM Prompt Tuning & Classification Edge Cases
+Do not describe output filenames as preserving the original source filename; that is not what `create_output_filename()` does.
 
-**Chain-of-thought prompting (`llm/prompts.py`):**
-The system prompt enforces a 4-step analysis process:
-1. **DECONSTRUCT** - Parse address into components
-2. **RESOLVE** - Web search for State/Province + Country
-3. **COMPARE** - Match against offshore list
-4. **CLASSIFY** - Apply label logic
+## API Surface
 
-**Critical edge cases taught to LLM:**
+Current routes in `app/api.py`:
+- `GET /` renders the upload page
+- `GET /health` returns status, service name, and version
+- `GET /favicon.ico` returns `204`
+- `POST /process` validates file extensions, stores uploads, creates a job, and schedules background processing
+- `GET /status/{job_id}` returns current job state and result metadata
+- `GET /download/{filename}` downloads processed files with path-traversal checks
 
-1. **Street name ambiguity:**
-   - ❌ "HONG KONG EAST ROAD, QINGDAO" → Misclassified as Hong Kong
-   - ✅ Correctly parsed: Street name vs actual location (Qingdao, China)
+Implementation details worth preserving in future edits:
+- `/process` only accepts `.xlsx` and `.xls`
+- `/download/{filename}` rejects path traversal and non-Excel filenames
+- `jobs` is a module-level dictionary, so restarts clear all job metadata
 
-2. **US state-level offshore jurisdictions:**
-   - ❌ "123 Main St, Sheridan" → Classified as USA (non-offshore)
-   - ✅ Correctly resolved: Sheridan, Wyoming → Wyoming is offshore jurisdiction
-   - **Pattern:** Cities like Sheridan/Cheyenne require state resolution
+## Development Guidance
 
-3. **Multi-address evaluation:**
-   - **Incoming:** Evaluate UP TO THREE addresses: (1) Payer address, (2) Payer bank address, (3) Correspondent bank address
-   - **Outgoing:** Evaluate TWO addresses: (1) Recipient address, (2) Recipient bank address
-   - If **ANY** address is offshore → `OFFSHORE_YES`
-   - Bank addresses combine multiple fields: `Address + City + Bank Country + Country Code`
-   - Example: Local company using offshore bank = `OFFSHORE_YES`
+When changing this codebase, keep the documentation aligned with these current realities:
 
-4. **Missing/incomplete addresses:**
-   - Empty address field → `OFFSHORE_SUSPECT` (not `OFFSHORE_NO`)
-   - Failed web search → `OFFSHORE_SUSPECT`
-   - Never default to `OFFSHORE_NO` without confident location resolution
+- PostgreSQL logging is part of the implementation, even though the app can continue without it after startup failure.
+- The LLM client uses the standard OpenAI Responses API shape.
+- Prompt behavior is extensive and includes web search, auto-offshore matching, and text-level suspicious-name detection.
+- `build_system_prompt()` is cached, so prompt-source data changes may require a restart.
+- Output filenames are timestamp-based and direction-based, not derived from the original filename.
+- The API expects a paired-file workflow, not a single-file workflow.
 
-5. **Entity HQ search (company headquarters verification):**
-   - For every named company (counterparty and our client when `client_category != "Физ"`), the LLM is instructed to search for the company’s registered head office address
-   - Annotation `→ SEARCH COMPANY HQ BY NAME` is appended to company names in the user message, following the same pattern as `→ VERIFY HQ LOCATION` for banks
-   - Both the transaction field address and the found HQ address are evaluated independently against the offshore list
-   - If either is offshore → `OFFSHORE_YES`
-   - Individual persons (`Физ` category) are excluded: their names are not sent to the LLM, so no HQ search occurs
-   - **Failed HQ lookup ≠ SUSPECT**: If the company is too small/obscure to find online, but all other data (field addresses, bank addresses, country codes) clearly resolves to non-offshore → `OFFSHORE_NO`. `OFFSHORE_SUSPECT` is only for cases where core location data is missing/unresolvable.
-   - Example: Company with field address in Kazakhstan but HQ in BVI → `OFFSHORE_YES`
-   - Example: Small Kazakh company HQ not found, all addresses in Kazakhstan → `OFFSHORE_NO`
+## Testing And Debugging
 
-**Temperature & retries:**
-- `temperature=0.1` (near-deterministic responses)
-- 3 validation retries on `ValidationError` (malformed JSON)
-- Batch size fixed at 10 for consistent quality
+Useful checks for this repository:
+1. Start the app with `python main.py`.
+2. Hit `/health` to verify configuration and routing.
+3. Upload sample paired files through `/`.
+4. Poll `/status/{job_id}` until completion.
+5. Verify generated Excel files under `STORAGE_PATH`.
+6. If PostgreSQL is enabled, verify rows in `transaction_logs`.
 
-**Testing prompt changes:**
-- Edit `build_system_prompt()` or `build_user_message()` in `llm/prompts.py`
-- Restart app (prompts loaded at runtime, not cached)
-- Monitor `reasoning_short_ru` field in output for quality assessment
-- Check logs for validation retry counts (indicates prompt clarity issues)
-
-## Development Workflows
-
-**Run locally:**
-```bash
-python main.py  # Starts uvicorn on port 8000
-```
-
-**Docker deployment:**
-```bash
-docker-compose up --build
-```
-Note: Dockerfile includes corporate proxy configuration for pip (`headproxy03.fortebank.com:8080`)
-
-**Volume mounts:** 
-- `./files` → `/app/files` - persistent storage for processed files
-- `./data` → `/app/data:ro` - read-only data directory (e.g., offshore DB)
-
-## Error Handling Patterns
-
-**Exceptions hierarchy (`core/exceptions.py`):**
-- `OffshoreAppError` (base) → domain-specific errors with `details` dict
-- `LLMError`, `ParsingError`, `ValidationError` - typed exceptions for each layer
-
-**LLM failures:** On batch/transaction error, create fallback response via `create_error_response()` with `llm_error` field populated, ensuring output completeness.
-
-**Validation retries:** `classify_batch()` retries up to 3x on Pydantic `ValidationError` (malformed LLM JSON).
-
-## Key Conventions
-
-- **Async/sync hybrid:** FastAPI routes are `async`, LLM calls are synchronous (run in executor via `loop.run_in_executor`)
-- **Logging:** Use `setup_logger(__name__)` from `core/logger.py` - configured log levels via `LOG_LEVEL` env var
-- **File naming:** `create_output_filename()` generates timestamped names: `{direction}_{original_name}_{timestamp}.xlsx`
-- **Schema translation:** `LABEL_TRANSLATIONS` dict in `core/schema.py` maps English labels to Russian for user-facing output
-
-## Testing & Debugging
-
-No test suite currently exists in codebase. For manual testing:
-1. Upload sample Excel files via web UI at `http://localhost:8000`
-2. Check `/health` endpoint for service status
-3. Monitor logs for batch processing progress (shows "Processed batch X/Y")
-4. Inspect `files/` directory for output Excel files
-
-**Common issues:**
-- Excel parsing failures: Verify `skiprows` value matches actual header row
-- LLM timeouts: Increase `OPENAI_TIMEOUT` (default 60s)
-- Concurrency bottlenecks: Adjust `MAX_CONCURRENT_LLM_CALLS` based on API limits
-
-
-[def]: ./llm/prompts.py)
+Common debugging directions:
+- parsing issues: inspect the actual Excel header row and normalized column names
+- no results after filtering: inspect `Сумма в тенге` and outgoing `Статус платежа`
+- Responses API failures: inspect timeout, HTTP response body, and schema validation retries
+- missing offshore matches: inspect SQLite country data and remember the prompt cache behavior

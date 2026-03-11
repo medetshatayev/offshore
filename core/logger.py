@@ -21,11 +21,11 @@ def setup_logger(name: str, level: Optional[str] = None) -> logging.Logger:
     """
     log_level = level or os.getenv("LOG_LEVEL", "INFO")
     
-    logger = logging.getLogger(name)
-    logger.setLevel(getattr(logging, log_level.upper()))
+    new_logger = logging.getLogger(name)
+    new_logger.setLevel(getattr(logging, log_level.upper()))
     
     # Avoid duplicate handlers
-    if not logger.handlers:
+    if not new_logger.handlers:
         handler = logging.StreamHandler(sys.stdout)
         handler.setLevel(getattr(logging, log_level.upper()))
         
@@ -34,6 +34,6 @@ def setup_logger(name: str, level: Optional[str] = None) -> logging.Logger:
             datefmt="%Y-%m-%d %H:%M:%S"
         )
         handler.setFormatter(formatter)
-        logger.addHandler(handler)
+        new_logger.addHandler(handler)
     
-    return logger
+    return new_logger

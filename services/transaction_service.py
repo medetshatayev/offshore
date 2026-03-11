@@ -5,7 +5,9 @@ Encapsulates business logic for processing transactions through
 the offshore risk detection pipeline.
 """
 import asyncio
-from typing import Any, Dict, List
+import time
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict, List, Optional
 
 from core.config import get_settings
 from core.exceptions import FileProcessingError
@@ -13,6 +15,8 @@ from core.exporters import create_output_filename, export_to_excel
 from core.logger import setup_logger
 from core.normalize import filter_by_threshold, filter_by_payment_status, normalize_transaction
 from core.parsing import parse_excel_file, validate_dataframe
+from core.pg import get_pg_pool
+from core.pg_logger import log_batch
 from core.schema import OffshoreRiskResponse
 from llm.classify import classify_batch, create_error_response
 
@@ -29,58 +33,116 @@ class TransactionService:
     async def process_transaction_batch(
         self,
         transactions: List[Dict[str, Any]],
-        semaphore: asyncio.Semaphore
+        semaphore: asyncio.Semaphore,
+        job_id: Optional[str] = None,
+        direction: Optional[str] = None,
+        original_filename: Optional[str] = None,
+        executor: Optional[ThreadPoolExecutor] = None,
     ) -> List[OffshoreRiskResponse]:
         """
-        Process all transactions by chunking them into batches of 10.
-        
+        Process all transactions by chunking them into batches.
+        Logs each completed batch to PostgreSQL progressively.
+
         Args:
             transactions: List of normalized transaction dictionaries
             semaphore: Asyncio semaphore for concurrency control
-        
+            job_id: UUID of the processing job (for DB logging)
+            direction: "incoming" or "outgoing" (for DB logging)
+            original_filename: Source Excel filename (for DB logging)
+            executor: Optional ThreadPoolExecutor for LLM calls
+
         Returns:
             List of classification responses
         """
+        job_start = time.monotonic()
         total = len(transactions)
-        batch_size = 10
-        
+        batch_size = self.settings.batch_size
+        pg_pool = get_pg_pool()
+
         # Create chunks
         chunks = [transactions[i:i + batch_size] for i in range(0, total, batch_size)]
         logger.info(f"Split {total} transactions into {len(chunks)} batches (size={batch_size})")
-        
+
         all_results = []
         completed_batches = [0]
-        
+
         async def process_chunk(chunk: List[Dict[str, Any]]) -> List[OffshoreRiskResponse]:
+            batch_start = time.monotonic()
             async with semaphore:
                 loop = asyncio.get_running_loop()
-                # Run sync LLM call in executor
-                results = await loop.run_in_executor(None, classify_batch, chunk)
-                
-                completed_batches[0] += 1
-                logger.info(f"Processed batch {completed_batches[0]}/{len(chunks)}")
-                
-                return results
+                llm_start = time.monotonic()
+                # Run sync LLM call in executor; semaphore released after this block
+                results = await loop.run_in_executor(executor, classify_batch, chunk)
+                llm_ms = (time.monotonic() - llm_start) * 1000
+
+            # Semaphore released — DB logging outside critical section
+            completed_batches[0] += 1
+            batch_num = completed_batches[0]
+            logger.info(f"Processed batch {batch_num}/{len(chunks)} [llm={llm_ms:.0f}ms]")
+
+            db_ms = 0.0
+            if pg_pool is not None and job_id:
+                db_start = time.monotonic()
+                try:
+                    await log_batch(
+                        pool=pg_pool,
+                        job_id=job_id,
+                        direction=direction or "unknown",
+                        original_filename=original_filename,
+                        transactions=chunk,
+                        responses=results,
+                    )
+                except Exception as db_err:
+                    logger.warning(f"Batch DB log failed (non-fatal): {db_err}")
+                db_ms = (time.monotonic() - db_start) * 1000
+
+            batch_ms = (time.monotonic() - batch_start) * 1000
+            logger.info(
+                f"Batch {batch_num} timings: "
+                f"llm={llm_ms:.0f}ms db={db_ms:.0f}ms total={batch_ms:.0f}ms"
+            )
+            return results
         
         # Process chunks concurrently (limited by semaphore)
         tasks = [process_chunk(chunk) for chunk in chunks]
         chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         # Flatten results and handle errors
         for i, result in enumerate(chunk_results):
             if isinstance(result, Exception):
                 logger.error(f"Batch {i} failed completely: {result}")
-                # Create error responses for this chunk's transactions
                 chunk_txns = chunks[i]
-                all_results.extend([
+                error_responses = [
                     create_error_response(txn, f"Batch processing failed: {str(result)}")
                     for txn in chunk_txns
-                ])
+                ]
+                all_results.extend(error_responses)
+
+                # Log error responses to PostgreSQL
+                if pg_pool is not None and job_id:
+                    try:
+                        await log_batch(
+                            pool=pg_pool,
+                            job_id=job_id,
+                            direction=direction or "unknown",
+                            original_filename=original_filename,
+                            transactions=chunk_txns,
+                            responses=error_responses,
+                        )
+                    except Exception as db_err:
+                        logger.warning(f"Error batch DB log failed (non-fatal): {db_err}")
             elif isinstance(result, list):
                 all_results.extend(result)
             else:
                 logger.error(f"Unexpected result type for batch {i}: {type(result)}")
-        
+
+        total_ms = (time.monotonic() - job_start) * 1000
+        rows_per_sec = len(all_results) / (total_ms / 1000) if total_ms > 0 else 0
+        logger.info(
+            f"Job summary [{direction}]: total_rows={len(all_results)} "
+            f"total_duration={total_ms:.0f}ms throughput={rows_per_sec:.1f} rows/sec"
+        )
+
         return all_results
     
     def build_classification_statistics(self, responses: List[OffshoreRiskResponse]) -> Dict[str, int]:
@@ -99,7 +161,15 @@ class TransactionService:
             classification_counts[label] = classification_counts.get(label, 0) + 1
         return classification_counts
     
-    async def process_file(self, file_path: str, direction: str) -> Dict[str, Any]:
+    async def process_file(
+        self,
+        file_path: str,
+        direction: str,
+        job_id: Optional[str] = None,
+        original_filename: Optional[str] = None,
+        semaphore: Optional[asyncio.Semaphore] = None,
+        executor: Optional[ThreadPoolExecutor] = None,
+    ) -> Dict[str, Any]:
         """
         Process a single Excel file through the full pipeline.
         
@@ -149,10 +219,17 @@ class TransactionService:
             
             # 4. Classify with LLM (batch processing)
             logger.info("Starting LLM batch classification...")
-            
-            semaphore = asyncio.Semaphore(self.settings.max_concurrent_llm_calls)
-            
-            responses = await self.process_transaction_batch(transactions, semaphore)
+
+            if semaphore is None:
+                semaphore = asyncio.Semaphore(self.settings.max_concurrent_llm_calls)
+
+            responses = await self.process_transaction_batch(
+                transactions, semaphore,
+                job_id=job_id,
+                direction=direction,
+                original_filename=original_filename,
+                executor=executor,
+            )
             
             logger.info(f"Completed LLM classification for {len(responses)}/{len(transactions)} transactions")
             
@@ -182,5 +259,4 @@ class TransactionService:
                 f"Failed to process {direction} file",
                 details={"file_path": file_path, "error": str(e)}
             )
-    
 
