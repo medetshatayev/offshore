@@ -144,19 +144,35 @@ def filter_by_payment_status(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def safe_get_value(row: pd.Series, key: str, default: Any = None) -> Any:
-    """Safely get value from pandas Series."""
+    """
+    Safely retrieve value from pandas Series with fallback.
+
+    Args:
+        row: Pandas Series (DataFrame row)
+        key: Column name to retrieve
+        default: Default value if key is missing or value is NaN
+
+    Returns:
+        Value from Series or default
+    """
     value = row.get(key, default)
-    if pd.isna(value):
-        return default
-    return value
+    return default if pd.isna(value) else value
 
 
 def safe_get_string(row: pd.Series, key: str, default: str = "") -> str:
-    """Safely convert value to string."""
+    """
+    Safely retrieve and convert value to string.
+
+    Args:
+        row: Pandas Series (DataFrame row)
+        key: Column name to retrieve
+        default: Default string if value is missing/empty
+
+    Returns:
+        String value or default
+    """
     value = safe_get_value(row, key, default)
-    if value is None or value == "":
-        return default
-    return str(value)
+    return default if value is None or value == "" else str(value)
 
 
 def normalize_transaction(row: pd.Series, direction: str) -> Dict[str, Any]:

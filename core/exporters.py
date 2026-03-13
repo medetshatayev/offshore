@@ -20,44 +20,47 @@ settings = get_settings()
 def format_result_column(response: OffshoreRiskResponse) -> str:
     """
     Format the Результат column content from LLM response.
-    
-    Format: Итог: {label_ru} | Уверенность: {conf}% | Объяснение: {reasoning} | 
-            Источники: {sources}
-    
+
+    Creates a formatted string with classification results, confidence,
+    reasoning, sources, and any errors.
+
     Args:
         response: LLM classification response
-    
+
     Returns:
-        Formatted result string
+        Formatted result string for Excel output
     """
     try:
-        # Translate label
-        label_ru = LABEL_TRANSLATIONS.get(response.classification.label, response.classification.label)
-        
-        # Format confidence as percentage (with bounds checking)
-        confidence_pct = int(max(0, min(1, response.classification.confidence)) * 100)
-        
-        # Build final result string
-        result = (
-            f"Итог: {label_ru} | "
-            f"Уверенность: {confidence_pct}% | "
-            f"Объяснение: {response.reasoning_short_ru}"
+        # Translate label to Russian
+        label_ru = LABEL_TRANSLATIONS.get(
+            response.classification.label,
+            response.classification.label
         )
-        
-        # Only add sources if they exist
-        if response.sources and len(response.sources) > 0:
+
+        # Format confidence as percentage (clamped to 0-100%)
+        confidence_pct = int(max(0, min(1, response.classification.confidence)) * 100)
+
+        # Build result string
+        parts = [
+            f"Итог: {label_ru}",
+            f"Уверенность: {confidence_pct}%",
+            f"Объяснение: {response.reasoning_short_ru}"
+        ]
+
+        # Add sources if present
+        if response.sources:
             sources_list = response.sources[:3]
             sources_str = "; ".join(sources_list)
             if len(response.sources) > 3:
                 sources_str += f" (+{len(response.sources) - 3} more)"
-            result += f" | Источники: {sources_str}"
-        
+            parts.append(f"Источники: {sources_str}")
+
         # Add error if present
         if response.llm_error:
-            result += f" | ОШИБКА: {response.llm_error}"
-        
-        return result
-    
+            parts.append(f"ОШИБКА: {response.llm_error}")
+
+        return " | ".join(parts)
+
     except Exception as e:
         logger.error(f"Error formatting result column: {e}")
         return f"ОШИБКА ФОРМАТИРОВАНИЯ: {str(e)}"

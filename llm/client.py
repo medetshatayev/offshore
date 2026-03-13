@@ -79,29 +79,31 @@ RESPONSE_SCHEMA: Dict[str, Any] = {
 
 def extract_json_from_text(content: str) -> str:
     """
-    Extract JSON from text, handling markdown code blocks and surrounding text.
-    
+    Extract JSON from text content, handling markdown and surrounding text.
+
+    Attempts to find JSON in the following order:
+    1. JSON within markdown code blocks (```json ... ``` or ``` ... ```)
+    2. Raw JSON object containing "results" key
+    3. Returns content as-is (for json.loads to handle)
+
     Args:
-        content: Raw text that may contain JSON wrapped in markdown or surrounded by text
-        
+        content: Raw text that may contain JSON
+
     Returns:
         Extracted JSON string
     """
     content = content.strip()
-    
-    # Try to find JSON in markdown code block first (handles ```json ... ``` or ``` ... ```)
-    pattern = r'```(?:json)?\s*(\{[\s\S]*?\})\s*```'
-    match = re.search(pattern, content)
+
+    # Try markdown code block first
+    match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', content)
     if match:
         return match.group(1)
-    
-    # Try to find raw JSON object with "results" key (our expected response structure)
-    pattern = r'\{[\s\S]*"results"[\s\S]*\}'
-    match = re.search(pattern, content)
+
+    # Try raw JSON object with expected structure
+    match = re.search(r'\{[\s\S]*"results"[\s\S]*\}', content)
     if match:
         return match.group(0)
-    
-    # Return as-is if no patterns matched (let json.loads handle the error)
+
     return content
 
 
@@ -316,21 +318,38 @@ class OpenAIClientWrapper:
 
     @staticmethod
     def _extract_output_text(completion_data: Dict[str, Any]) -> Optional[str]:
-        """Extract the assistant output text from a Responses API payload."""
+        """
+        Extract assistant output text from Responses API payload.
+
+        Args:
+            completion_data: API response payload
+
+        Returns:
+            Extracted output text or None if not found
+
+        Raises:
+            LLMError: If model refused to provide response
+        """
+        # Check for direct output_text field
         if completion_data.get("output_text"):
             return completion_data["output_text"]
 
+        # Search through output items
         for item in completion_data.get("output", []):
             if item.get("type") != "message" or item.get("role") != "assistant":
                 continue
 
             for content_item in item.get("content", []):
                 content_type = content_item.get("type")
+
+                # Handle refusals
                 if content_type == "refusal":
                     raise LLMError(
                         "Model refused to provide a structured response",
                         details={"refusal": content_item.get("refusal")},
                     )
+
+                # Return output text if found
                 if content_type == "output_text":
                     return content_item.get("text")
 
@@ -338,11 +357,20 @@ class OpenAIClientWrapper:
 
     @staticmethod
     def _extract_response_sources(completion_data: Dict[str, Any]) -> List[str]:
-        """Collect cited URLs exposed by Responses API web-search items."""
+        """
+        Collect cited URLs from Responses API web-search results.
+
+        Args:
+            completion_data: API response payload
+
+        Returns:
+            List of unique source URLs (deduplicated)
+        """
         urls: List[str] = []
-        seen = set()
+        seen: set[str] = set()
 
         for item in completion_data.get("output", []):
+            # Extract from web_search_call items
             if item.get("type") == "web_search_call":
                 action = item.get("action") or {}
                 for source in action.get("sources", []):
@@ -351,15 +379,15 @@ class OpenAIClientWrapper:
                         seen.add(url)
                         urls.append(url)
 
+            # Extract from message annotations
             if item.get("type") == "message":
                 for content_item in item.get("content", []):
                     for annotation in content_item.get("annotations", []):
-                        if annotation.get("type") != "url_citation":
-                            continue
-                        url = annotation.get("url")
-                        if url and url not in seen:
-                            seen.add(url)
-                            urls.append(url)
+                        if annotation.get("type") == "url_citation":
+                            url = annotation.get("url")
+                            if url and url not in seen:
+                                seen.add(url)
+                                urls.append(url)
 
         return urls
 
