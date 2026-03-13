@@ -89,24 +89,40 @@ async def favicon() -> Response:
 
 
 def _extract_original_filename(stored_path: Path) -> str:
-    """Extract original filename from the stored path (strip job ID prefix)."""
+    """
+    Extract original filename from the stored path.
+
+    Removes job ID prefix from filenames like "{job_id}_incoming_{filename}".
+
+    Args:
+        stored_path: Path to the stored file with job ID prefix
+
+    Returns:
+        Original filename without job ID prefix
+    """
     name = stored_path.name
     return name.split("_", 2)[-1] if "_" in name else name
 
 
-def _build_direction_result(
-    result: Any, failed: bool
-) -> Dict[str, Any]:
-    """Build the result dict for a single direction (incoming/outgoing)."""
-    return {
-        "filename": (
-            Path(result["output_path"]).name
-            if not failed and isinstance(result, dict) and result.get("output_path")
-            else None
-        ),
-        "stats": result.get("stats", {}) if not failed and isinstance(result, dict) else {},
-        "error": str(result) if failed else None,
-    }
+def _build_direction_result(result: Any, failed: bool) -> Dict[str, Any]:
+    """
+    Build the result dictionary for a single processing direction.
+
+    Args:
+        result: Processing result (dict if successful, Exception if failed)
+        failed: Whether the processing failed
+
+    Returns:
+        Dictionary with filename, stats, and error information
+    """
+    if failed:
+        return {"filename": None, "stats": {}, "error": str(result)}
+
+    if not isinstance(result, dict):
+        return {"filename": None, "stats": {}, "error": None}
+
+    filename = Path(result["output_path"]).name if result.get("output_path") else None
+    return {"filename": filename, "stats": result.get("stats", {}), "error": None}
 
 
 async def process_files_background(
@@ -259,16 +275,15 @@ async def process_files(
     incoming_path = Path(settings.temp_storage_path) / f"{job_id}_incoming_{incoming_file.filename}"
     outgoing_path = Path(settings.temp_storage_path) / f"{job_id}_outgoing_{outgoing_file.filename}"
     
+    async def save_file(path: Path, file: UploadFile) -> None:
+        """Save uploaded file to disk."""
+        content = await file.read()
+        path.write_bytes(content)
+
     try:
-        # Save incoming file
-        with open(incoming_path, "wb") as f:
-            content = await incoming_file.read()
-            f.write(content)
-        
-        # Save outgoing file
-        with open(outgoing_path, "wb") as f:
-            content = await outgoing_file.read()
-            f.write(content)
+        # Save uploaded files
+        await save_file(incoming_path, incoming_file)
+        await save_file(outgoing_path, outgoing_file)
         
         # Initialize job status
         jobs[job_id] = {
