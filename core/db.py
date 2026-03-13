@@ -24,10 +24,17 @@ class Database:
     @contextmanager
     def get_connection(self) -> Generator[sqlite3.Connection, None, None]:
         """
-        Context manager for database connections.
-        
+        Context manager for database connections with automatic cleanup.
+
+        Provides a connection with Row factory enabled for dict-like access.
+
         Yields:
-            Database connection with Row factory enabled.
+            Database connection with Row factory enabled
+
+        Example:
+            with db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM countries")
         """
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
@@ -56,10 +63,15 @@ class Database:
 
     def add_country(self, name: str) -> None:
         """
-        Add a country to the database.
-        
+        Add a country to the offshore jurisdictions database.
+
+        Uses INSERT OR IGNORE to avoid duplicate entries.
+
         Args:
-            name: Country name to add.
+            name: Country or jurisdiction name to add
+
+        Raises:
+            sqlite3.Error: If database operation fails
         """
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -76,10 +88,10 @@ class Database:
 
     def get_all_countries(self) -> List[str]:
         """
-        Get all country names from database.
-        
+        Retrieve all offshore jurisdiction names from database.
+
         Returns:
-            List of country names sorted alphabetically.
+            List of country names sorted alphabetically, or empty list if query fails
         """
         with self.get_connection() as conn:
             cursor = conn.cursor()
